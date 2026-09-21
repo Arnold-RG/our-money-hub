@@ -27,6 +27,8 @@ The join code is a household key. Do not post it in public messages or on this r
 - Life project budgets
 - Currency exchange for PLN, EUR, USD, RWF, XAF (Congo-Brazzaville), CDF, and more
 - Plans: a board for writing a project from the first step to the last
+- Advisor: recalculates income, spending, and savings, then suggests how to keep more and live on this month’s pay
+- On a phone: Face ID, fingerprint, or Windows Hello after you turn it on in Settings
 
 ## Security
 

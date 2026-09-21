@@ -13,6 +13,8 @@ import { Exchange } from "./pages/Exchange.jsx";
 import { Plans } from "./pages/Plans.jsx";
 import { People } from "./pages/People.jsx";
 import { Settings } from "./pages/Settings.jsx";
+import { Opening } from "./Opening.jsx";
+import { Advisor } from "./pages/Advisor.jsx";
 
 const NAV = [
   { to: "/", label: "Home", icon: "home", grant: "household" },
@@ -23,6 +25,7 @@ const NAV = [
   { to: "/costs", label: "Other costs", icon: "out", grant: "costs" },
   { to: "/exchange", label: "Exchange", icon: "calc", grant: "exchange" },
   { to: "/plans", label: "Plans", icon: "board", grant: "plans" },
+  { to: "/advisor", label: "Advisor", icon: "idea", grant: "advisor" },
   { to: "/people", label: "People", icon: "people", grant: "people" },
   { to: "/settings", label: "Settings", icon: "gear", grant: "settings" },
 ];
@@ -32,6 +35,7 @@ export default function App() {
   const [month, setMonth] = useState(currentMonth());
   const [theme, setTheme] = useState(() => localStorage.getItem("omh-theme") || "light");
   const [more, setMore] = useState(false);
+  const [introDone, setIntroDone] = useState(() => sessionStorage.getItem("omh.intro") === "done");
   const location = useLocation();
 
   async function refresh() {
@@ -74,6 +78,10 @@ export default function App() {
     return NAV.filter((item) => item.to === "/" || item.to === "/settings" || Boolean(boot.grants?.[item.grant]));
   }, [boot]);
 
+  if (!introDone) {
+    return <Opening onDone={() => setIntroDone(true)} />;
+  }
+
   if (!boot) {
     return <div className="auth-wrap"><p>Opening Our Money Hub…</p></div>;
   }
@@ -95,7 +103,7 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><OmhMark /></div>
+          <div className="brand-mark"><OmhMark live /></div>
           <div>
             <h1>OMH</h1>
             <p>{session.household?.name || "Our Money Hub"}</p>
@@ -128,6 +136,7 @@ export default function App() {
           <Route path="/costs" element={gate(session, "costs", <Ledger kind="costs" session={session} month={month} setMonth={setMonth} />)} />
           <Route path="/exchange" element={gate(session, "exchange", <Exchange session={session} />)} />
           <Route path="/plans" element={gate(session, "plans", <Plans session={session} />)} />
+          <Route path="/advisor" element={gate(session, "advisor", <Advisor session={session} month={month} setMonth={setMonth} />)} />
           <Route path="/people" element={gate(session, "people", <People session={session} onRefresh={refresh} />)} />
           <Route path="/settings" element={<Settings session={session} theme={theme} setTheme={setTheme} onRefresh={refresh} />} />
           <Route path="*" element={<Navigate to="/" replace />} />

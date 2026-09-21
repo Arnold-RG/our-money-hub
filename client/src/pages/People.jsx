@@ -10,6 +10,7 @@ const MODULES = [
   ["costs", "Other costs"],
   ["exchange", "Exchange"],
   ["plans", "Plans"],
+  ["advisor", "Advisor"],
 ];
 
 export function People({ session, onRefresh }) {
@@ -143,6 +144,7 @@ function GrantEditor({ grants, onSave }) {
     costs: grants.costs,
     exchange: grants.exchange,
     plans: grants.plans,
+    advisor: grants.advisor,
   });
   return (
     <div>

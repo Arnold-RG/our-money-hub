@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { biometricSupported, hasBiometricForDevice, platformUnlockReady, unlockWithBiometric } from "../biometrics.js";
 import { Field, Notice, OmhMark } from "../ui.jsx";
 
 export function Auth({ mode, currencies, onDone }) {
@@ -14,6 +15,13 @@ function Login({ onDone }) {
   const [syncCode, setSyncCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bio, setBio] = useState({ ready: false, saved: false });
+
+  useEffect(() => {
+    Promise.all([platformUnlockReady(), Promise.resolve(hasBiometricForDevice())]).then(([ready, saved]) => {
+      setBio({ ready: ready && biometricSupported(), saved });
+    });
+  }, []);
 
   async function submit(event) {
     event.preventDefault();
@@ -30,12 +38,31 @@ function Login({ onDone }) {
     }
   }
 
+  async function biometric() {
+    setBusy(true);
+    setError("");
+    try {
+      const userId = await unlockWithBiometric();
+      await api.loginByUserId(userId);
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="auth-wrap">
       <form className="auth-card" onSubmit={submit}>
         <BrandBlock />
         <h2>Welcome back to Our Money Hub.</h2>
-        <p className="lede">Only household accounts can enter. There is no public signup. After five failed tries the door locks for fifteen minutes.</p>
+        <p className="lede">Only household accounts can enter. On a phone, use Face ID, fingerprint, or Windows Hello after you turn it on in Settings.</p>
+        {bio.ready && bio.saved && (
+          <button className="btn bio-btn" type="button" disabled={busy} onClick={biometric}>
+            Unlock with Face or fingerprint
+          </button>
+        )}
         <div className="tab-row">
           <button type="button" className={tab === "in" ? "btn" : "btn-ghost"} onClick={() => setTab("in")}>Sign in</button>
           <button type="button" className={tab === "join" ? "btn" : "btn-ghost"} onClick={() => setTab("join")}>Join household</button>
@@ -168,7 +195,7 @@ function Setup({ currencies, onDone }) {
 function BrandBlock() {
   return (
     <div className="brand" style={{ marginBottom: 8 }}>
-      <div className="brand-mark"><OmhMark /></div>
+      <div className="brand-mark"><OmhMark live /></div>
       <div>
         <h1>Our Money Hub</h1>
         <p>OMH · household books</p>

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { biometricLinked, clearBiometric, platformUnlockReady, registerBiometric } from "../biometrics.js";
 import { Field, Notice } from "../ui.jsx";
 
 export function Settings({ session, theme, setTheme, onRefresh }) {
@@ -11,7 +12,13 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bioReady, setBioReady] = useState(false);
+  const [bioOn, setBioOn] = useState(() => biometricLinked(session.user.id));
   const syncCode = session.syncCode || api.syncCode();
+
+  useEffect(() => {
+    platformUnlockReady().then(setBioReady);
+  }, []);
 
   async function saveHouse(event) {
     event.preventDefault();
@@ -102,7 +109,43 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <div className="row">
             <button className={theme === "light" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("light")}>Light</button>
             <button className={theme === "dark" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("dark")}>Dark</button>
+            <button className="btn-ghost" type="button" onClick={() => {
+              sessionStorage.removeItem("omh.intro");
+              window.location.reload();
+            }}>Play opening again</button>
           </div>
+        </article>
+
+        <article className="card">
+          <h3>Face, fingerprint, or Windows Hello</h3>
+          <p className="lede">On a phone or laptop with biometrics, unlock this account without typing the password. It stays on this device only.</p>
+          {bioReady ? (
+            <div className="row">
+              {!bioOn && (
+                <button className="btn" type="button" disabled={busy} onClick={async () => {
+                  setBusy(true); setError("");
+                  try {
+                    await registerBiometric(session.user);
+                    setBioOn(true);
+                    setOk("Biometric unlock is on for this device.");
+                  } catch (err) {
+                    setError(err.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}>Turn on biometric unlock</button>
+              )}
+              {bioOn && (
+                <button className="btn-ghost" type="button" onClick={() => {
+                  clearBiometric(session.user.id);
+                  setBioOn(false);
+                  setOk("Biometric unlock was removed on this device.");
+                }}>Remove biometric unlock</button>
+              )}
+            </div>
+          ) : (
+            <p className="hint">This browser does not expose a platform authenticator. Try Safari or Chrome on a phone with Face ID or a fingerprint reader.</p>
+          )}
         </article>
 
         {session.grants.settings && (

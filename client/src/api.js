@@ -50,7 +50,7 @@ function grantsFor(user) {
   if (user.role === "admin" || user.role === "spouse") {
     return {
       income: true, expenses: true, savings: true, projects: true, costs: true,
-      exchange: true, plans: true, people: user.role === "admin", settings: true, household: true,
+      exchange: true, plans: true, advisor: true, people: user.role === "admin", settings: true, household: true,
     };
   }
   const grant = currentVault().grants[user.id] || {};
@@ -62,6 +62,7 @@ function grantsFor(user) {
     costs: Boolean(grant.costs),
     exchange: Boolean(grant.exchange),
     plans: Boolean(grant.plans),
+    advisor: Boolean(grant.advisor),
     people: false,
     settings: false,
     household: false,
@@ -71,7 +72,7 @@ function grantsFor(user) {
 function emptyGrants() {
   return {
     income: false, expenses: false, savings: false, projects: false, costs: false,
-    exchange: false, plans: false, people: false, settings: false, household: false,
+    exchange: false, plans: false, advisor: false, people: false, settings: false, household: false,
   };
 }
 
@@ -248,6 +249,20 @@ export const api = {
     return { ok: true, user: publicUser(user) };
   },
 
+  async loginByUserId(userId) {
+    if (!hasLocalVault()) throw new Error("No household is open on this device.");
+    if (!isOpen()) {
+      await openLocalVault();
+      await refreshFromRemote();
+    }
+    const user = currentVault().users.find((row) => row.id === userId);
+    if (!user) throw new Error("That biometric key is not linked to a household account.");
+    writeSession(user.id);
+    logActivity(user, "login", `${user.name} signed in with biometric unlock`);
+    await persist();
+    return { ok: true, user: publicUser(user) };
+  },
+
   async logout() {
     clearSession();
     return { ok: true };
@@ -312,6 +327,7 @@ export const api = {
         costs: Boolean(body.grants?.costs),
         exchange: Boolean(body.grants?.exchange),
         plans: Boolean(body.grants?.plans),
+        advisor: Boolean(body.grants?.advisor),
       };
     }
     logActivity(user, "people", `Added ${role} account for ${name}`);
@@ -332,6 +348,7 @@ export const api = {
       costs: Boolean(grants.costs),
       exchange: Boolean(grants.exchange),
       plans: Boolean(grants.plans),
+      advisor: Boolean(grants.advisor),
     };
     logActivity(user, "people", `Updated access for ${person.name}`);
     await persist();

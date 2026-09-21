@@ -91,6 +91,7 @@ a { color: inherit; }
   display: grid;
   place-items: center;
   box-shadow: var(--shadow);
+  overflow: visible;
 }
 .brand-mark svg { width: 22px; height: 22px; }
 .brand h1 {
@@ -548,6 +549,145 @@ td.num, th.num { text-align: right; font-family: var(--font-num); }
   background: transparent;
   border-bottom: 1px solid var(--rule);
 }
+
+.omh-live .omh-spark {
+  transform-origin: 32px 32px;
+  animation: omh-spin 4.5s linear infinite;
+}
+.omh-live .omh-ring {
+  transform-origin: 32px 32px;
+  animation: omh-pulse 2.2s ease-in-out infinite;
+}
+@keyframes omh-spin { to { transform: rotate(360deg); } }
+@keyframes omh-pulse {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+.bio-btn {
+  width: 100%;
+  margin: 14px 0 4px;
+  padding: 14px;
+  font-size: 1.05rem;
+  background: linear-gradient(135deg, #c9a227, #8b6914);
+  color: #0b1220;
+}
+
+.idea-list { display: grid; gap: 12px; margin-top: 14px; }
+.idea {
+  border: 1px solid var(--rule);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--paper) 70%, white);
+}
+.idea h4 { margin: 0 0 6px; font-family: var(--font-display); font-size: 1.35rem; }
+.idea p { margin: 0; color: var(--muted); }
+.idea-ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--rule)); }
+.idea-warn { border-color: color-mix(in srgb, var(--danger) 45%, var(--rule)); }
+.idea-idea { border-color: color-mix(in srgb, var(--gold) 55%, var(--rule)); }
+
+.opening {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #05070d;
+  overflow: hidden;
+  perspective: 1800px;
+}
+.opening-light {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 48%, #fff6d2 0%, #ffe08a 12%, #c9a227 28%, transparent 58%);
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 700ms ease, transform 1200ms ease;
+}
+.opening-rays {
+  position: absolute;
+  inset: -20%;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 231, 160, 0.16) 0 8deg, transparent 8deg 18deg);
+  opacity: 0;
+  animation: omh-spin 18s linear infinite;
+}
+.door {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  z-index: 3;
+  transition: transform 1.35s cubic-bezier(0.16, 0.84, 0.28, 1);
+}
+.door-left { left: 0; transform-origin: left center; }
+.door-right { right: 0; transform-origin: right center; }
+.door-face {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  border: 10px solid #c9a227;
+  background:
+    linear-gradient(180deg, rgba(201, 162, 39, 0.18), transparent 30%),
+    repeating-linear-gradient(90deg, #141c2c 0 18px, #0f1624 18px 36px);
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.45);
+  color: #f6f1e6;
+  text-align: center;
+}
+.door-left .door-face { border-right-width: 4px; }
+.door-right .door-face { border-left-width: 4px; }
+.door-face span {
+  letter-spacing: 0.4em;
+  font-size: 0.78rem;
+}
+.door-face b {
+  font-family: var(--font-display);
+  font-size: clamp(4rem, 12vw, 8rem);
+  line-height: 0.8;
+}
+.opening-seal {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: #f6f1e6;
+  transition: opacity 400ms ease, transform 700ms ease;
+}
+.opening-mark {
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  animation: omh-pulse 1.6s ease-in-out infinite;
+}
+.opening-seal p {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  letter-spacing: 0.08em;
+}
+.opening-skip {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 6;
+  background: transparent;
+  color: #f6f1e6;
+  border: 1px solid rgba(201, 162, 39, 0.5);
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+.opening-crack .opening-light { opacity: 0.55; transform: scale(0.7); }
+.opening-crack .opening-rays { opacity: 0.25; }
+.opening-open .door-left { transform: rotateY(98deg); }
+.opening-open .door-right { transform: rotateY(-98deg); }
+.opening-open .opening-light { opacity: 0.85; transform: scale(1); }
+.opening-open .opening-rays { opacity: 0.4; }
+.opening-open .opening-seal { opacity: 0; transform: scale(1.2); }
+.opening-flood .door-left { transform: rotateY(108deg); }
+.opening-flood .door-right { transform: rotateY(-108deg); }
+.opening-flood .opening-light { opacity: 1; transform: scale(1.35); }
+.opening-flood .opening-seal { opacity: 0; }
 
 @media (max-width: 1100px) {
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

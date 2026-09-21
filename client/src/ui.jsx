@@ -12,6 +12,7 @@ export function Icon({ name }) {
     people: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM4 19a4 4 0 0 1 8 0m4-1a3.5 3.5 0 0 1 6 0",
     gear: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 3v2m0 14v2M4.2 6.2l1.4 1.4m12.8 12.8 1.4 1.4M3 12h2m14 0h2M4.2 17.8l1.4-1.4m12.8-12.8 1.4-1.4",
     more: "M6 12h.01M12 12h.01M18 12h.01",
+    idea: "M12 3a6 6 0 0 1 4 10c0 2-1 3-2 4h-4c-1-1-2-2-2-4a6 6 0 0 1 4-10zm-2 16h4m-3 2h2",
   };
   return (
     <svg className="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -20,11 +21,20 @@ export function Icon({ name }) {
   );
 }
 
-export function OmhMark() {
+export function OmhMark({ live = false }) {
+  const gid = live ? "omhGoldLive" : "omhGoldStill";
   return (
-    <svg viewBox="0 0 64 64" aria-hidden="true">
-      <circle cx="32" cy="32" r="28" fill="#c9a227" />
-      <circle cx="32" cy="32" r="22" fill="#0b1220" />
+    <svg className={live ? "omh-live" : ""} viewBox="0 0 64 64" aria-hidden="true">
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#ffe7a0" />
+          <stop offset="50%" stopColor="#c9a227" />
+          <stop offset="100%" stopColor="#8b6914" />
+        </linearGradient>
+      </defs>
+      <circle className="omh-ring" cx="32" cy="32" r="29" fill="none" stroke={`url(#${gid})`} strokeWidth="3" />
+      <circle cx="32" cy="32" r="22.5" fill="#0b1220" />
+      <circle className="omh-spark" cx="32" cy="32" r="26" fill="none" stroke="#ffe7a0" strokeWidth="1.4" strokeDasharray="12 48" />
       <path d="M18 40V24h5l9 11 9-11h5v16h-5V30l-9 11-9-11v10h-5z" fill="#f6f1e6" />
     </svg>
   );
