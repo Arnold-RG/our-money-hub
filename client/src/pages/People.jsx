@@ -1,0 +1,160 @@
+import { useEffect, useState } from "react";
+import { api } from "../api.js";
+import { Field, Modal, Notice } from "../ui.jsx";
+
+const MODULES = [
+  ["income", "Income"],
+  ["expenses", "Expenses"],
+  ["savings", "Savings"],
+  ["projects", "Projects"],
+  ["costs", "Other costs"],
+  ["exchange", "Exchange"],
+  ["plans", "Plans"],
+];
+
+export function People({ session, onRefresh }) {
+  const [members, setMembers] = useState([]);
+  const [error, setError] = useState("");
+  const [ok, setOk] = useState("");
+  const [creating, setCreating] = useState(null);
+  const [reset, setReset] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setMembers((await api.people()).members);
+  }
+
+  useEffect(() => {
+    load().catch((err) => setError(err.message));
+  }, []);
+
+  async function create() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.addPerson(creating);
+      setCreating(null);
+      setOk("Account created. They can sign in with the email and password you set.");
+      await load();
+      onRefresh?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <header className="page-head">
+        <div>
+          <p className="kicker">Who may enter</p>
+          <h2>People</h2>
+          <p className="lede">You and your partner already share every account. Guests stay outside the household books unless you open a door.</p>
+        </div>
+        <div className="row">
+          <button className="btn-ghost" onClick={() => setCreating({ name: "", email: "", password: "", role: "spouse", grants: {} })}>Add partner</button>
+          <button className="btn" onClick={() => setCreating({ name: "", email: "", password: "", role: "guest", grants: {} })}>Invite guest</button>
+        </div>
+      </header>
+      <Notice error={error} ok={ok} />
+      <section className="card-grid">
+        {members.map((person) => (
+          <article className="card" key={person.id}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h3>{person.name}</h3>
+              <span className="tag copper">{person.role}</span>
+            </div>
+            <p className="lede">{person.email}</p>
+            {person.role === "guest" ? (
+              <GrantEditor
+                grants={person.grants}
+                onSave={async (grants) => {
+                  await api.updateGrants(person.id, grants);
+                  setOk(`Updated access for ${person.name}.`);
+                  await load();
+                }}
+              />
+            ) : (
+              <p className="lede">Full household access. No extra permission is required between the two of you.</p>
+            )}
+            <div className="row" style={{ marginTop: 12 }}>
+              <button className="btn-ghost" onClick={() => setReset({ id: person.id, name: person.name, password: "" })}>Reset password</button>
+              {person.role !== "admin" && (
+                <button className="btn-ghost" onClick={async () => {
+                  if (!window.confirm(`Remove ${person.name} from Our Money Hub?`)) return;
+                  await api.removePerson(person.id);
+                  await load();
+                  onRefresh?.();
+                }}>Remove</button>
+              )}
+            </div>
+          </article>
+        ))}
+      </section>
+
+      {creating && (
+        <Modal title={creating.role === "spouse" ? "Add your partner" : "Invite a guest"} onClose={() => setCreating(null)} footer={<><button className="btn-ghost" onClick={() => setCreating(null)}>Cancel</button><button className="btn" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create account"}</button></>}>
+          <p className="lede">{creating.role === "spouse" ? "They will see and edit every income, expense, pot, and project — the same as you." : "Guests cannot see your household accounts until you switch on specific books."}</p>
+          <div className="form-grid">
+            <Field label="Name" wide><input value={creating.name} onChange={(e) => setCreating({ ...creating, name: e.target.value })} /></Field>
+            <Field label="Email"><input type="email" value={creating.email} onChange={(e) => setCreating({ ...creating, email: e.target.value })} /></Field>
+            <Field label="Password"><input type="password" value={creating.password} onChange={(e) => setCreating({ ...creating, password: e.target.value })} /></Field>
+          </div>
+          {creating.role === "guest" && (
+            <div className="check-grid" style={{ marginTop: 12 }}>
+              {MODULES.map(([key, label]) => (
+                <label className="check" key={key}>
+                  <input type="checkbox" checked={Boolean(creating.grants[key])} onChange={(e) => setCreating({ ...creating, grants: { ...creating.grants, [key]: e.target.checked } })} />
+                  {label}
+                </label>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {reset && (
+        <Modal title={`Reset password · ${reset.name}`} onClose={() => setReset(null)} footer={<><button className="btn-ghost" onClick={() => setReset(null)}>Cancel</button><button className="btn" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            await api.resetPassword(reset.id, reset.password);
+            setReset(null);
+            setOk("Password updated. Their other sessions were signed out.");
+          } catch (err) {
+            setError(err.message);
+          } finally {
+            setBusy(false);
+          }
+        }}>Save password</button></>}>
+          <Field label="New password"><input type="password" value={reset.password} onChange={(e) => setReset({ ...reset, password: e.target.value })} /></Field>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function GrantEditor({ grants, onSave }) {
+  const [next, setNext] = useState({
+    income: grants.income,
+    expenses: grants.expenses,
+    savings: grants.savings,
+    projects: grants.projects,
+    costs: grants.costs,
+    exchange: grants.exchange,
+    plans: grants.plans,
+  });
+  return (
+    <div>
+      <div className="check-grid" style={{ marginTop: 10 }}>
+        {MODULES.map(([key, label]) => (
+          <label className="check" key={key}>
+            <input type="checkbox" checked={Boolean(next[key])} onChange={(e) => setNext({ ...next, [key]: e.target.checked })} />
+            {label}
+          </label>
+        ))}
+      </div>
+      <button className="btn-small btn" style={{ marginTop: 10 }} type="button" onClick={() => onSave(next)}>Save access</button>
+    </div>
+  );
+}
