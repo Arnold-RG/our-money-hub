@@ -237,6 +237,59 @@ td.num, th.num { text-align: right; font-family: var(--font-num); }
 .tag.copper { background: color-mix(in srgb, var(--copper) 16%, white); color: var(--copper-deep); }
 .tag.gold { background: color-mix(in srgb, var(--gold) 22%, white); color: #7a5d1c; }
 
+.book-card { margin-top: 18px; padding: 22px; }
+.book-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.book-head h3 { margin: 0; }
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.chip, .chip-select, .chip-search {
+  border: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--paper) 70%, white);
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: var(--ink);
+}
+.chip.on {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.chip-search { min-width: min(220px, 100%); flex: 1; }
+.book-wrap { max-height: 560px; }
+.book-table td:nth-child(4) { white-space: normal; min-width: 180px; }
+.type-pill {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 650;
+}
+.type-pill.income { background: var(--sage-soft); color: var(--ok); }
+.type-pill.expense, .type-pill.cost { background: color-mix(in srgb, var(--copper) 16%, white); color: var(--copper-deep); }
+.type-pill.savings { background: color-mix(in srgb, var(--gold) 22%, white); color: #7a5d1c; }
+.type-pill.project { background: color-mix(in srgb, var(--sage) 18%, white); color: var(--sage); }
+.book-count { margin: 12px 0 0; color: var(--muted); }
+.security-steps {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+.security-steps strong { color: var(--ink); }
+
 .btn, .btn-ghost, .btn-danger {
   border: 0;
   border-radius: 14px;
@@ -752,6 +805,7 @@ td.num, th.num { text-align: right; font-family: var(--font-num); }
   .sidebar { display: none; }
   .main { padding: 20px 16px 110px; }
   .form-grid, .check-grid, .social-grid { grid-template-columns: 1fr; }
+  .book-head { flex-direction: column; }
   .bottom-nav { display: grid; grid-template-columns: repeat(5, 1fr); }
   .page-head h2 { font-size: 1.85rem; }
   .auth-card { padding: 22px 18px; border-radius: 24px; }

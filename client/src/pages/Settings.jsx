@@ -17,18 +17,10 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
   const [bioReady, setBioReady] = useState(false);
   const [bioOn, setBioOn] = useState(() => biometricLinked(session.user.id));
   const [qr, setQr] = useState("");
-  const [oauth, setOauth] = useState(() => oauthConfig());
-  const [nextHouse, setNextHouse] = useState({
-    name: session.user.name,
-    username: session.user.username || "",
-    email: session.user.email,
-    password: "",
-    householdName: "",
-    currency: "PLN",
-  });
-  const syncCode = session.syncCode || api.syncCode();
+  const [google, setGoogle] = useState(() => oauthConfig().google || "");
+  const admin = session.user.role === "admin";
+  const syncCode = admin ? (session.syncCode || api.syncCode()) : "";
   const url = session.joinUrl || (syncCode ? joinUrl(syncCode) : "");
-  const houses = session.houses || [];
 
   useEffect(() => {
     platformUnlockReady().then(setBioReady);
@@ -39,60 +31,35 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
     qrDataUrl(url).then(setQr).catch(() => setQr(""));
   }, [url]);
 
-  async function saveHouse(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api.household(house);
-      setOk("Household details updated.");
-      onRefresh?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function savePass(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api.password(pass);
-      setPass({ currentPassword: "", nextPassword: "" });
-      setOk("Your password was changed.");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function download() {
-    const data = await api.exportData();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = "omh-household-export.json";
-    a.click();
-    URL.revokeObjectURL(objectUrl);
-  }
-
   return (
     <>
       <header className="page-head">
         <div>
-          <p className="kicker">The house itself</p>
+          <p className="kicker">House and security</p>
           <h2>Settings</h2>
-          <p className="lede">Polish złoty is the household currency unless you change it. Share the code, link, or QR only with people who should join this house.</p>
+          <p className="lede">
+            {admin
+              ? "You manage the house, the invite, and the security stack. Members add and see the same books."
+              : "You can add and view every household line. Only an admin can change the house name or send invites."}
+          </p>
         </div>
       </header>
       <Notice error={error} ok={ok} />
       <section className="card-grid">
-        {session.grants.settings && (
-          <form className="card" onSubmit={saveHouse}>
+        {admin && (
+          <form className="card" onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true); setError("");
+            try {
+              await api.household(house);
+              setOk("Household details updated.");
+              onRefresh?.();
+            } catch (err) {
+              setError(err.message);
+            } finally {
+              setBusy(false);
+            }
+          }}>
             <h3>Household</h3>
             <div className="form-grid" style={{ marginTop: 12 }}>
               <Field label="Name" wide>
@@ -108,10 +75,10 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           </form>
         )}
 
-        {session.grants.invite && (
+        {admin && (
           <article className="card">
             <h3>Invite members</h3>
-            <p className="lede">Only the household admin can send this. Members open the link or paste the code, then create their own username, email, and password.</p>
+            <p className="lede">Only the admin can send this. Members create their own username, email, and password, then they see and add to the same books.</p>
             {qr && <img className="invite-qr" src={qr} alt="Household join QR code" />}
             <p className="hint">{url}</p>
             <textarea readOnly value={syncCode} rows={4} />
@@ -130,152 +97,89 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           </article>
         )}
 
-        {houses.length > 0 && (
-          <article className="card">
-            <h3>Households on this device</h3>
-            <p className="lede">Open another house you already created or joined here.</p>
-            <div className="list">
-              {houses.map((item) => (
-                <div className="list-item" key={item.id}>
-                  <div>
-                    <strong>{item.name}</strong>
-                    {item.id === session.household?.id ? <p className="hint">Open now</p> : null}
-                  </div>
-                  {item.id !== session.household?.id && (
-                    <button className="btn-ghost" type="button" onClick={async () => {
-                      setBusy(true); setError("");
-                      try {
-                        await api.switchHouse(item.id);
-                        setOk(`Opened ${item.name}.`);
-                        onRefresh?.();
-                      } catch (err) {
-                        setError(err.message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}>Open</button>
-                  )}
-                </div>
-              ))}
+        <article className="card">
+          <h3>Security stack</h3>
+          <ol className="security-steps">
+            <li><strong>Password</strong> — username or email, 10+ letters and numbers. The browser can store it.</li>
+            {admin ? <li><strong>Authenticator</strong> — admin only, 6-digit app code after password.</li> : <li><strong>Authenticator</strong> — not used for members.</li>}
+            <li><strong>Biometric</strong> — Face, fingerprint, or Windows Hello on this device, for every person.</li>
+            <li><strong>Session</strong> — closes after 20 idle minutes, or after 8 hours. Five failed sign-ins lock the login for 15 minutes.</li>
+            <li><strong>Vault</strong> — household books are encrypted on this device before they sync.</li>
+          </ol>
+          <form onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true); setError("");
+            try {
+              await api.password(pass);
+              setPass({ currentPassword: "", nextPassword: "" });
+              setOk("Your password was changed.");
+            } catch (err) {
+              setError(err.message);
+            } finally {
+              setBusy(false);
+            }
+          }}>
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              <Field label="Current password" wide>
+                <input type="password" name="current-password" autoComplete="current-password" value={pass.currentPassword} onChange={(e) => setPass({ ...pass, currentPassword: e.target.value })} />
+              </Field>
+              <Field label="New password" wide>
+                <input type="password" name="new-password" autoComplete="new-password" value={pass.nextPassword} onChange={(e) => setPass({ ...pass, nextPassword: e.target.value })} />
+              </Field>
             </div>
-          </article>
-        )}
-
-        <form className="card" onSubmit={async (event) => {
-          event.preventDefault();
-          setBusy(true); setError("");
-          try {
-            await api.setup(nextHouse);
-            setOk("A new household is open on this device.");
-            onRefresh?.();
-          } catch (err) {
-            setError(err.message);
-          } finally {
-            setBusy(false);
-          }
-        }}>
-          <h3>Create another household</h3>
-          <p className="lede">Anyone can open their own house. This does not replace the house you are in; both stay on this device.</p>
-          <div className="form-grid" style={{ marginTop: 12 }}>
-            <Field label="Your name"><input value={nextHouse.name} onChange={(e) => setNextHouse({ ...nextHouse, name: e.target.value })} required /></Field>
-            <Field label="Username"><input autoComplete="username" value={nextHouse.username} onChange={(e) => setNextHouse({ ...nextHouse, username: e.target.value })} required /></Field>
-            <Field label="Email"><input type="email" autoComplete="email" value={nextHouse.email} onChange={(e) => setNextHouse({ ...nextHouse, email: e.target.value })} required /></Field>
-            <Field label="Password" wide><input type="password" autoComplete="new-password" value={nextHouse.password} onChange={(e) => setNextHouse({ ...nextHouse, password: e.target.value })} required /></Field>
-            <Field label="New household name" wide><input value={nextHouse.householdName} onChange={(e) => setNextHouse({ ...nextHouse, householdName: e.target.value })} required /></Field>
+            <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Update password</button>
+          </form>
+          <div style={{ marginTop: 16 }}>
+            {bioReady ? (
+              bioOn
+                ? <p className="hint">Face or fingerprint is linked on this device.</p>
+                : (
+                  <button className="btn" type="button" disabled={busy} onClick={async () => {
+                    setBusy(true); setError("");
+                    try {
+                      await registerBiometric(session.user);
+                      await api.markBiometric();
+                      setBioOn(true);
+                      setOk("Biometric unlock is on for this device.");
+                    } catch (err) {
+                      setError(err.message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}>Add Face or fingerprint</button>
+                )
+            ) : (
+              <p className="hint">This browser has no platform authenticator. Use a phone with Face ID or a computer with Windows Hello.</p>
+            )}
           </div>
-          <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Create household</button>
-        </form>
-
-        <form className="card" onSubmit={savePass}>
-          <h3>Your password</h3>
-          <p className="lede">At least 10 characters, with letters and numbers. Sessions close after 20 idle minutes.</p>
-          <div className="form-grid" style={{ marginTop: 12 }}>
-            <Field label="Current" wide>
-            <input type="password" value={pass.currentPassword} onChange={(e) => setPass({ ...pass, currentPassword: e.target.value })} autoComplete="current-password" name="current-password" />
-            </Field>
-            <Field label="New password" wide>
-              <input type="password" value={pass.nextPassword} onChange={(e) => setPass({ ...pass, nextPassword: e.target.value })} autoComplete="new-password" />
-            </Field>
-          </div>
-          <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Update password</button>
-        </form>
-
-        {session.user.role === "admin" && (
-        <article className="card">
-          <h3>Authenticator app</h3>
-          <p className="lede">Only the household admin uses Google Authenticator, Authy, or Microsoft Authenticator. This account {session.user.account?.totpOn ? "already has an authenticator linked." : "still needs an authenticator before the books stay open."}</p>
-        </article>
-        )}
-
-        <article className="card">
-          <h3>Display</h3>
-          <p className="lede">Ivory ledger by day. Midnight gold after dark.</p>
-          <div className="row">
-            <button className={theme === "light" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("light")}>Light</button>
-            <button className={theme === "dark" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("dark")}>Dark</button>
-            <button className="btn-ghost" type="button" onClick={() => {
-              sessionStorage.removeItem("omh.intro");
-              window.location.reload();
-            }}>Play opening again</button>
-          </div>
-        </article>
-
-        <article className="card">
-          <h3>Face, fingerprint, or Windows Hello</h3>
-          <p className="lede">Admins and members both use Face ID, Touch ID, Windows Hello, or a fingerprint on this device.</p>
-          {bioReady ? (
-            <div className="row">
-              {!bioOn && (
-                <button className="btn" type="button" disabled={busy} onClick={async () => {
-                  setBusy(true); setError("");
-                  try {
-                    await registerBiometric(session.user);
-                    await api.markBiometric();
-                    setBioOn(true);
-                    setOk("Biometric unlock is on for this device.");
-                  } catch (err) {
-                    setError(err.message);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}>Turn on biometric unlock</button>
-              )}
-              {bioOn && <p className="hint">Face or fingerprint is linked on this device.</p>}
-            </div>
-          ) : (
-            <p className="hint">This browser does not expose a platform authenticator. Try Safari or Chrome on a phone with Face ID or a computer with Windows Hello.</p>
+          {admin && (
+            <p className="hint" style={{ marginTop: 12 }}>
+              Authenticator status: {session.user.account?.totpOn ? "linked" : "required on the next admin sign-in"}.
+            </p>
           )}
         </article>
 
-        {session.grants.settings && (
+        <article className="card">
+          <h3>Display</h3>
+          <div className="row">
+            <button className={theme === "light" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("light")}>Light</button>
+            <button className={theme === "dark" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("dark")}>Dark</button>
+          </div>
+        </article>
+
+        {admin && (
           <form className="card" onSubmit={(event) => {
             event.preventDefault();
-            saveOauthConfig({
-              google: oauth.google || "",
-              apple: oauth.apple || "",
-              facebook: oauth.facebook || "",
-              microsoft: oauth.microsoft || "",
-            });
-            setOk("Social sign-in IDs were saved on this device.");
+            saveOauthConfig({ google: google.trim() });
+            setOk("Google sign-in ID saved on this device.");
           }}>
-            <h3>Google, Apple, Facebook, and more</h3>
-            <p className="lede">Optional. Add app IDs from each provider so household members can tap Continue with that account. Without an ID, they still sign up with that email plus an Our Money Hub password.</p>
-            <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="Google client ID" wide><input value={oauth.google || ""} onChange={(e) => setOauth({ ...oauth, google: e.target.value })} /></Field>
-              <Field label="Apple client ID" wide><input value={oauth.apple || ""} onChange={(e) => setOauth({ ...oauth, apple: e.target.value })} /></Field>
-              <Field label="Facebook app ID" wide><input value={oauth.facebook || ""} onChange={(e) => setOauth({ ...oauth, facebook: e.target.value })} /></Field>
-              <Field label="Microsoft client ID" wide><input value={oauth.microsoft || ""} onChange={(e) => setOauth({ ...oauth, microsoft: e.target.value })} /></Field>
-            </div>
-            <button className="btn" style={{ marginTop: 14 }}>Save social IDs</button>
+            <h3>Google sign-in</h3>
+            <p className="lede">Optional. A Google Cloud web client ID turns on Continue with Google for this household’s admin sign-in.</p>
+            <Field label="Google client ID" wide>
+              <input value={google} onChange={(e) => setGoogle(e.target.value)} placeholder="….apps.googleusercontent.com" />
+            </Field>
+            <button className="btn" style={{ marginTop: 14 }}>Save Google ID</button>
           </form>
-        )}
-
-        {session.grants.settings && (
-          <article className="card">
-            <h3>Keep a copy</h3>
-            <p className="lede">Download the household books as JSON. Password hashes stay in the vault; this file is for your records.</p>
-            <button className="btn-ghost" type="button" onClick={download}>Export household data</button>
-          </article>
         )}
       </section>
     </>

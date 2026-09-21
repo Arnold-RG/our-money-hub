@@ -1,13 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
-import { longDate, money, monthLabel, pct, prettyDate, shiftMonth } from "../format.js";
-import { Empty, Money, MonthNav, Notice, Progress } from "../ui.jsx";
+import { longDate, money, monthLabel, prettyDate, shiftMonth } from "../format.js";
+import { Empty, Money, MonthNav, Notice } from "../ui.jsx";
+
+const TYPES = [
+  ["all", "All"],
+  ["income", "Income"],
+  ["expense", "Expenses"],
+  ["cost", "Other costs"],
+  ["savings", "Savings"],
+  ["project", "Projects"],
+];
 
 export function Dashboard({ session, month, setMonth }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [kind, setKind] = useState("all");
+  const [person, setPerson] = useState("all");
+  const [query, setQuery] = useState("");
   const currency = session.household?.currency || "PLN";
+  const people = (session.members || []).filter((row) => row.role !== "guest");
 
   useEffect(() => {
     let alive = true;
@@ -17,30 +30,31 @@ export function Dashboard({ session, month, setMonth }) {
     return () => { alive = false; };
   }, [month]);
 
+  const rows = useMemo(() => {
+    const list = data?.book || [];
+    const q = query.trim().toLowerCase();
+    return list.filter((row) => {
+      if (kind !== "all" && row.kind !== kind) return false;
+      if (person !== "all" && row.owner_id !== person && row.person !== person) return false;
+      if (!q) return true;
+      return `${row.title} ${row.person} ${row.category} ${row.notes} ${row.type}`.toLowerCase().includes(q);
+    });
+  }, [data, kind, person, query]);
+
   if (error) return <Notice error={error} />;
   if (!data) return <p className="lede">Gathering this month’s figures…</p>;
-  if (data.locked) {
-    return (
-      <header className="page-head">
-        <div>
-          <p className="kicker">{longDate()}</p>
-          <h2>Waiting for access</h2>
-          <p className="lede">The household books are closed to this account until an admin grants access in People.</p>
-        </div>
-      </header>
-    );
-  }
 
   const first = session.user.name.split(" ")[0];
-  const maxTrend = Math.max(1, ...data.trend.flatMap((row) => [row.income, row.out]));
 
   return (
     <>
       <header className="page-head">
         <div>
           <p className="kicker">{longDate()}</p>
-          <h2>Good to see you, {first}.</h2>
-          <p className="lede">A shared view of {session.household?.name || "the household"} — both of you can read and write every figure.</p>
+          <h2>Household book, {first}.</h2>
+          <p className="lede">
+            {session.household?.name || "This household"} — every admin and member can add their own lines, and everyone sees the same table.
+          </p>
         </div>
         <MonthNav month={month} label={monthLabel(month)} onChange={(d) => setMonth(shiftMonth(month, d))} />
       </header>
@@ -49,7 +63,7 @@ export function Dashboard({ session, month, setMonth }) {
         <article className="kpi">
           <h3>Income</h3>
           <Money cents={data.totals.income} currency={currency} />
-          <div className="hint">What came in this month</div>
+          <div className="hint">Everyone’s money in</div>
         </article>
         <article className="kpi">
           <h3>Spending</h3>
@@ -57,122 +71,75 @@ export function Dashboard({ session, month, setMonth }) {
           <div className="hint">Expenses + other costs</div>
         </article>
         <article className="kpi">
-          <h3>Saved so far</h3>
+          <h3>Saved</h3>
           <Money cents={data.totals.savingsTotal} currency={currency} />
           <div className="hint">{money(data.totals.savingsMonth, currency)} moved this month</div>
         </article>
         <article className="kpi">
           <h3>Surplus</h3>
           <Money cents={data.totals.surplus} currency={currency} signed />
-          <div className="hint">Income minus all outflows</div>
+          <div className="hint">Income minus outflows</div>
         </article>
       </section>
 
-      <section className="split" style={{ marginTop: 14 }}>
-        <article className="card">
-          <h3>Six-month pulse</h3>
-          <div className="trend" style={{ marginTop: 16 }}>
-            {data.trend.map((row) => (
-              <div className="trend-col" key={row.month}>
-                <div className="trend-bars">
-                  <b style={{ height: `${(row.income / maxTrend) * 100}%` }} title="Income" />
-                  <i style={{ height: `${(row.out / maxTrend) * 100}%` }} title="Outflow" />
-                </div>
-                <small>{row.month.slice(5)}</small>
-              </div>
-            ))}
+      <section className="card book-card">
+        <div className="book-head">
+          <div>
+            <h3>Household ledger</h3>
+            <p className="lede">One table for admin and members. Filter by person or type.</p>
           </div>
-          <p className="hint" style={{ color: "var(--muted)", marginTop: 12 }}>Sage is income. Copper is money going out.</p>
-        </article>
-        <article className="card">
-          <h3>Where spending went</h3>
-          {data.categories.length === 0 ? (
-            <Empty title="No expenses yet" text="Write the first one and the household picture will appear." action={<Link className="btn" to="/expenses">Add an expense</Link>} />
-          ) : (
-            <div className="bars" style={{ marginTop: 14 }}>
-              {data.categories.map((row) => (
-                <div className="bar-row" key={row.category}>
-                  <span>{row.category}</span>
-                  <div className="bar-track"><i style={{ width: `${pct(row.amount_cents, data.totals.expenses)}%` }} /></div>
-                  <strong className="num">{money(row.amount_cents, currency)}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-      </section>
-
-      {data.ownerBreakdown.length > 0 && (
-        <section className="card" style={{ marginTop: 14 }}>
-          <h3>Both accounts, one picture</h3>
-          <div className="table-wrap">
-            <table>
+          <Link className="btn" to="/income">Add a line</Link>
+        </div>
+        <div className="filter-bar">
+          {TYPES.map(([id, label]) => (
+            <button key={id} type="button" className={kind === id ? "chip on" : "chip"} onClick={() => setKind(id)}>{label}</button>
+          ))}
+          <select className="chip-select" value={person} onChange={(e) => setPerson(e.target.value)}>
+            <option value="all">All people</option>
+            {people.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+          </select>
+          <input className="chip-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search the book" />
+        </div>
+        {rows.length === 0 ? (
+          <Empty
+            title="No household lines this month"
+            text="Any member can record income, expenses, savings, or a project. It will appear here for everyone."
+            action={<Link className="btn" to="/expenses">Add an expense</Link>}
+          />
+        ) : (
+          <div className="table-wrap book-wrap">
+            <table className="book-table">
               <thead>
                 <tr>
+                  <th>Date</th>
+                  <th>Type</th>
                   <th>Person</th>
-                  <th className="num">Income</th>
-                  <th className="num">Expenses</th>
-                  <th className="num">Other costs</th>
-                  <th className="num">Savings</th>
+                  <th>Title</th>
+                  <th>Category</th>
+                  <th className="num">Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {data.ownerBreakdown.map((row) => (
+                {rows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.name}</td>
-                    <td className="num">{money(row.income_cents, currency)}</td>
-                    <td className="num">{money(row.expense_cents, currency)}</td>
-                    <td className="num">{money(row.cost_cents, currency)}</td>
-                    <td className="num">{money(row.savings_cents, currency)}</td>
+                    <td>{prettyDate(row.date)}</td>
+                    <td><span className={`type-pill ${row.kind} ${row.flow}`}>{row.type}</span></td>
+                    <td><span className="owner-pill">{row.person}</span></td>
+                    <td>
+                      <strong>{row.title}</strong>
+                      {row.notes ? <div className="hint">{row.notes}</div> : null}
+                    </td>
+                    <td><span className="tag">{row.category}</span></td>
+                    <td className={`num ${row.flow === "in" ? "pos" : "neg"}`}>
+                      {row.flow === "out" ? "−" : "+"}{money(row.amount_cents, currency)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </section>
-      )}
-
-      <section className="card-grid" style={{ marginTop: 14 }}>
-        <article className="card">
-          <h3>Savings pots</h3>
-          {data.savings.length === 0 ? <p className="lede">No pots yet.</p> : data.savings.map((row) => (
-            <div key={row.id} style={{ marginTop: 14 }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>{row.name}</strong>
-                <span>{money(row.current_cents, currency)}</span>
-              </div>
-              <Progress value={pct(row.current_cents, row.target_cents || 1)} />
-            </div>
-          ))}
-        </article>
-        <article className="card">
-          <h3>Life projects</h3>
-          {data.projects.length === 0 ? <p className="lede">No open projects.</p> : data.projects.map((row) => (
-            <div key={row.id} style={{ marginTop: 14 }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>{row.name}</strong>
-                <span className="tag">{row.status}</span>
-              </div>
-              <Progress value={pct(row.spent_cents, row.budget_cents || 1)} />
-              <p className="hint" style={{ color: "var(--muted)" }}>{money(row.spent_cents, currency)} of {money(row.budget_cents, currency)}{row.target_date ? ` · ${prettyDate(row.target_date)}` : ""}</p>
-            </div>
-          ))}
-        </article>
-      </section>
-
-      <section className="card" style={{ marginTop: 14 }}>
-        <h3>Latest household activity</h3>
-        <div className="list">
-          {data.recent.map((row) => (
-            <div className="list-item" key={row.id}>
-              <div>
-                <strong>{row.detail}</strong>
-                <div className="hint" style={{ color: "var(--muted)" }}>{row.actor_name}</div>
-              </div>
-              <span>{prettyDate(row.created_at)}</span>
-            </div>
-          ))}
-        </div>
+        )}
+        <p className="hint book-count">{rows.length} line{rows.length === 1 ? "" : "s"} this month</p>
       </section>
     </>
   );

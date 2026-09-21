@@ -2,10 +2,6 @@ const STORE = "omh.oauth";
 
 export const SOCIAL_PROVIDERS = [
   { id: "google", label: "Google", color: "#ea4335" },
-  { id: "apple", label: "Apple", color: "#111111" },
-  { id: "facebook", label: "Facebook", color: "#1877f2" },
-  { id: "microsoft", label: "Microsoft", color: "#00a4ef" },
-  { id: "github", label: "GitHub", color: "#24292f" },
 ];
 
 export function oauthConfig() {

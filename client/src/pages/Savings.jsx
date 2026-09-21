@@ -32,7 +32,7 @@ export function Savings({ session }) {
         monthly: Number(editing.monthly || 0),
         targetDate: editing.targetDate || null,
         notes: editing.notes,
-        ownerId: Number(editing.ownerId),
+        ownerId: editing.ownerId || session.user.id,
       };
       if (editing.id) await api.updateSavings(editing.id, body);
       else await api.addSavings(body);
@@ -69,7 +69,7 @@ export function Savings({ session }) {
         <div>
           <p className="kicker">Kept aside</p>
           <h2>Savings</h2>
-          <p className="lede">Emergency funds, school, a home, a trip — each pot is visible to both of you.</p>
+          <p className="lede">Emergency funds, school, a home, a trip — every pot is visible to the whole household, and any member can add one.</p>
         </div>
         <button className="btn" onClick={() => setEditing({ name: "", target: "", current: "", monthly: "", targetDate: "", notes: "", ownerId: session.user.id })}>New pot</button>
       </header>

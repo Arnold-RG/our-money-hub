@@ -54,36 +54,24 @@ const LEDGERS = {
 function grantsFor(user) {
   if (!user) return emptyGrants();
   if (user.role === "admin" || user.role === "member" || user.role === "spouse") {
+    const isAdmin = user.role === "admin";
     return {
       income: true, expenses: true, savings: true, projects: true, costs: true,
       exchange: true, plans: true, advisor: true,
-      people: user.role === "admin",
+      people: isAdmin,
       settings: true,
-      invite: user.role === "admin",
+      invite: isAdmin,
+      manage: isAdmin,
       household: true,
     };
   }
-  const grant = currentVault().grants[user.id] || {};
-  return {
-    income: Boolean(grant.income),
-    expenses: Boolean(grant.expenses),
-    savings: Boolean(grant.savings),
-    projects: Boolean(grant.projects),
-    costs: Boolean(grant.costs),
-    exchange: Boolean(grant.exchange),
-    plans: Boolean(grant.plans),
-    advisor: Boolean(grant.advisor),
-    people: false,
-    settings: false,
-    invite: false,
-    household: false,
-  };
+  return emptyGrants();
 }
 
 function emptyGrants() {
   return {
     income: false, expenses: false, savings: false, projects: false, costs: false,
-    exchange: false, plans: false, advisor: false, people: false, settings: false, invite: false, household: false,
+    exchange: false, plans: false, advisor: false, people: false, settings: false, invite: false, manage: false, household: false,
   };
 }
 
@@ -141,6 +129,7 @@ function membersOf() {
     .map((row) => ({
       id: row.id,
       name: row.name,
+      username: row.username || "",
       email: row.email,
       role: row.role,
       created_at: row.createdAt,
@@ -424,7 +413,7 @@ export const api = {
   },
 
   async household(body) {
-    const { vault } = requireGrant("settings");
+    const { vault } = requireGrant("invite");
     const name = cleanText(body.name, 80);
     if (!name) throw new Error("Household name is required.");
     vault.household.name = name;
@@ -786,6 +775,99 @@ export const api = {
         savings_cents: vault.savings.filter((item) => item.owner_id === row.id).reduce((s, r) => s + r.current_cents, 0),
       }))
       : [];
+    const book = [];
+    const addBook = (row) => {
+      if (!row.date || row.date < bounds.start || row.date > bounds.end) return;
+      book.push(row);
+    };
+    if (grants.income) {
+      for (const row of vault.incomes) {
+        addBook({
+          id: `in-${row.id}`,
+          date: row.received_on,
+          type: "Income",
+          kind: "income",
+          person: ownerName(row.owner_id),
+          owner_id: row.owner_id,
+          title: row.source,
+          category: row.category,
+          amount_cents: row.amount_cents,
+          flow: "in",
+          notes: row.notes || "",
+        });
+      }
+    }
+    if (grants.expenses) {
+      for (const row of vault.expenses) {
+        addBook({
+          id: `ex-${row.id}`,
+          date: row.spent_on,
+          type: "Expense",
+          kind: "expense",
+          person: ownerName(row.owner_id),
+          owner_id: row.owner_id,
+          title: row.merchant,
+          category: row.category,
+          amount_cents: row.amount_cents,
+          flow: "out",
+          notes: row.notes || "",
+        });
+      }
+    }
+    if (grants.costs) {
+      for (const row of vault.costs) {
+        addBook({
+          id: `co-${row.id}`,
+          date: row.due_on,
+          type: "Other cost",
+          kind: "cost",
+          person: ownerName(row.owner_id),
+          owner_id: row.owner_id,
+          title: row.title,
+          category: row.category,
+          amount_cents: row.amount_cents,
+          flow: "out",
+          notes: row.notes || "",
+        });
+      }
+    }
+    if (grants.savings) {
+      for (const row of vault.savingsEntries) {
+        const pot = vault.savings.find((item) => item.id === row.savings_id);
+        addBook({
+          id: `sv-${row.id}`,
+          date: row.entry_on,
+          type: row.kind === "withdraw" ? "Savings out" : "Savings in",
+          kind: "savings",
+          person: row.created_by_name || ownerName(pot?.owner_id),
+          owner_id: pot?.owner_id || row.created_by,
+          title: pot?.name || "Savings",
+          category: row.kind === "withdraw" ? "Withdrawal" : "Deposit",
+          amount_cents: row.amount_cents,
+          flow: row.kind === "withdraw" ? "out" : "in",
+          notes: row.notes || "",
+        });
+      }
+    }
+    if (grants.projects) {
+      for (const row of vault.projectEntries) {
+        const project = vault.projects.find((item) => item.id === row.project_id);
+        addBook({
+          id: `pr-${row.id}`,
+          date: row.spent_on || row.entry_on || String(row.created_at || "").slice(0, 10),
+          type: "Project",
+          kind: "project",
+          person: ownerName(project?.owner_id) || row.created_by_name || "Household",
+          owner_id: project?.owner_id,
+          title: project?.name || "Project",
+          category: "Life project",
+          amount_cents: row.amount_cents,
+          flow: "out",
+          notes: row.notes || "",
+        });
+      }
+    }
+    book.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
     const catMap = {};
     if (grants.expenses) {
       for (const row of vault.expenses.filter((item) => inRange(item, "spent_on"))) {
@@ -812,6 +894,7 @@ export const api = {
       month: bounds.month,
       totals: { income, expenses, costs, outflow: expenses + costs, savingsTotal, savingsMonth, surplus: income - expenses - costs },
       ownerBreakdown,
+      book,
       categories,
       trend,
       recent: vault.activity.slice(0, 10),
@@ -915,7 +998,7 @@ export const api = {
   },
 
   async exportData() {
-    requireGrant("settings");
+    requireGrant("invite");
     const vault = currentVault();
     return {
       household: vault.household,

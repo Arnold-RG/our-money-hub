@@ -74,7 +74,7 @@ export function Ledger({ kind, session, month, setMonth }) {
         date: form.date,
         recurring: form.recurring,
         notes: form.notes,
-        ownerId: Number(form.ownerId),
+        ownerId: form.ownerId || session.user.id,
       };
       if (form.id) await api.updateLedger(meta.path, form.id, body);
       else await api.addLedger(meta.path, body);
@@ -102,7 +102,7 @@ export function Ledger({ kind, session, month, setMonth }) {
         <div>
           <p className="kicker">{meta.kicker}</p>
           <h2>{meta.title}</h2>
-          <p className="lede">{meta.lede}</p>
+          <p className="lede">{meta.lede} Everyone in the household can add a line and see every other person’s lines.</p>
         </div>
         <div className="row">
           <MonthNav month={month} label={monthLabel(month)} onChange={(d) => setMonth(shiftMonth(month, d))} />
@@ -132,7 +132,7 @@ export function Ledger({ kind, session, month, setMonth }) {
       </section>
       <section className="card" style={{ marginTop: 14 }}>
         {!data?.items.length ? (
-          <Empty title={`No ${meta.title.toLowerCase()} this month`} text="Write it down once and both of you will see it immediately." action={<button className="btn" onClick={() => setEditing({ title: "", category: data.categories[0], amount: "", date: today(), recurring: "none", notes: "", ownerId: session.user.id })}>{meta.add}</button>} />
+          <Empty title={`No ${meta.title.toLowerCase()} this month`} text="Write it down once and the whole household will see it in Home." action={<button className="btn" onClick={() => setEditing({ title: "", category: data.categories[0], amount: "", date: today(), recurring: "none", notes: "", ownerId: session.user.id })}>{meta.add}</button>} />
         ) : (
           <div className="table-wrap">
             <table>
