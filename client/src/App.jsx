@@ -67,10 +67,10 @@ export default function App() {
   }
 
   if (!boot) {
-    return <div className="auth-wrap"><p>Opening Our Money Hub…</p></div>;
+    return <div className="start-wrap"><p>Opening Our Money Hub…</p></div>;
   }
   if (boot.error) {
-    return <div className="auth-wrap"><p>{boot.error}</p></div>;
+    return <div className="start-wrap"><p>{boot.error}</p></div>;
   }
   if (!boot.user || joining) {
     return (

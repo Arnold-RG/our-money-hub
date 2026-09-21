@@ -24,7 +24,36 @@ function b64ToBytes(value) {
 function hydrateVault(vault) {
   if (!vault) return vault;
   if (!Array.isArray(vault.messages)) vault.messages = [];
+  if (Array.isArray(vault.users)) {
+    vault.users = vault.users.map((row) => ({
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      createdAt: row.createdAt,
+    }));
+  }
   return vault;
+}
+
+export function wipeOldLoginStore() {
+  [
+    "omh.accounts",
+    "omh.lock",
+    "omh.oauth",
+    "omh.google",
+    "omh.webauthn",
+    "omh.bio",
+  ].forEach((key) => localStorage.removeItem(key));
+  sessionStorage.removeItem("omh.sid");
+  const drop = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    if (key.startsWith("omh.") && /oauth|totp|webauthn|biometric|password|account/i.test(key)) {
+      drop.push(key);
+    }
+  }
+  drop.forEach((key) => localStorage.removeItem(key));
 }
 
 export function emptyVault() {

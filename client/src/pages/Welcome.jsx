@@ -75,11 +75,11 @@ export function Welcome({ boot, onDone }) {
 
   if (view === "home") {
     return (
-      <div className="auth-wrap">
-        <div className="auth-card">
+      <div className="start-wrap">
+        <div className="start-card">
           <Brand />
           <h2>Open your household.</h2>
-          <p className="lede">No login. Create a house, or join with the code or link an admin sends. Add your name so the books know who is who.</p>
+          <p className="lede">Create a house, or join with the code or link an admin sends. Add your name so the books know who is who.</p>
           <Notice error={error} ok={ok} />
           {houses.length > 0 && (
             <div className="home-actions" style={{ marginBottom: 12 }}>
@@ -109,11 +109,11 @@ export function Welcome({ boot, onDone }) {
 
   if (view === "invite") {
     return (
-      <div className="auth-wrap">
-        <div className="auth-card">
+      <div className="start-wrap">
+        <div className="start-card">
           <Brand />
           <h2>Share this house</h2>
-          <p className="lede">Send the link or code. People only add their name to join — no password, email, or codes to type.</p>
+          <p className="lede">Send the link or code. People add their name to join the house.</p>
           <p className="hint">{invite.url}</p>
           <textarea readOnly value={invite.code} rows={3} />
           <Notice error={error} ok={ok} />
@@ -137,8 +137,8 @@ export function Welcome({ boot, onDone }) {
 
   const creating = view === "create";
   return (
-    <div className="auth-wrap">
-      <form className="auth-card" onSubmit={creating ? create : join}>
+    <div className="start-wrap">
+      <form className="start-card" onSubmit={creating ? create : join}>
         <Brand />
         <h2>{creating ? "Create your household" : "Join a household"}</h2>
         <p className="lede">

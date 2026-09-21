@@ -35,7 +35,7 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
       <section className="card-grid">
         <article className="card">
           <h3>Who you are</h3>
-          <p className="lede">This device does not ask for a password. Pick the name you use in this household.</p>
+          <p className="lede">Pick the name you use in this household.</p>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <Field label="Using this house as" wide>
               <select value={who} onChange={(e) => setWho(e.target.value)}>

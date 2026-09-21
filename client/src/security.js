@@ -55,7 +55,7 @@ export function writeSession(userId) {
 
 export function readSession() {
   try {
-    const raw = localStorage.getItem(WHO_KEY) || sessionStorage.getItem("omh.sid");
+    const raw = localStorage.getItem(WHO_KEY);
     if (!raw) return null;
     const row = JSON.parse(raw);
     if (!row.userId) return null;

@@ -2,8 +2,6 @@
 
 Private household books. The admin creates the house and sends a join code or link. Members add their name. After that, **admin and members all add lines**, **everyone sees the same household table on Home**, and **everyone can chat and open each person’s money, savings, and projects**.
 
-There is **no login**, password, authenticator, biometric check, or sign-in code.
-
 Default currency is Polish złoty (PLN).
 
 ## Live site

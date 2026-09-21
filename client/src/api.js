@@ -32,6 +32,7 @@ import {
   persist,
   pullRemote,
   refreshFromRemote,
+  wipeOldLoginStore,
 } from "./vault.js";
 import { joinUrl } from "./share.js";
 
@@ -178,6 +179,7 @@ function assertOwner(ownerId) {
 
 export const api = {
   async bootstrap() {
+    wipeOldLoginStore();
     const currencies = CURRENCY_CODES;
     const houses = hasLocalVault() ? listHouses() : [];
     if (hasLocalVault() && !isOpen()) {
@@ -370,7 +372,7 @@ export const api = {
     const { user, vault } = requireAdmin();
     const person = vault.users.find((row) => row.id === id);
     if (!person) throw new Error("Person not found.");
-    if (person.id === user.id) throw new Error("You cannot remove your own account.");
+    if (person.id === user.id) throw new Error("You cannot remove yourself.");
     if (person.role === "admin" && vault.users.filter((row) => row.role === "admin").length < 2) {
       throw new Error("Keep at least one admin in this household.");
     }

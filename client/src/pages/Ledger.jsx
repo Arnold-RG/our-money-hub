@@ -141,7 +141,7 @@ export function Ledger({ kind, session, month, setMonth }) {
                   <th>Date</th>
                   <th>{meta.titleLabel}</th>
                   <th>Category</th>
-                  <th>Whose account</th>
+                  <th>Person</th>
                   <th>Rhythm</th>
                   <th className="num">Amount</th>
                   <th></th>
@@ -207,7 +207,7 @@ export function Ledger({ kind, session, month, setMonth }) {
                 {(data?.categories || []).map((c) => <option key={c}>{c}</option>)}
               </select>
             </Field>
-            <Field label="Whose account">
+            <Field label="Person">
               <select value={editing.ownerId} onChange={(e) => setEditing({ ...editing, ownerId: e.target.value })}>
                 {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
