@@ -53,7 +53,7 @@ export function Dashboard({ session, month, setMonth }) {
           <p className="kicker">{longDate()}</p>
           <h2>Household book, {first}.</h2>
           <p className="lede">
-            {session.household?.name || "This household"} — every admin and member can add their own lines, and everyone sees the same table.
+            {session.household?.name || "This household"} — every admin and member can add their own lines, chat together, and see the same table.
           </p>
         </div>
         <MonthNav month={month} label={monthLabel(month)} onChange={(d) => setMonth(shiftMonth(month, d))} />
@@ -88,7 +88,10 @@ export function Dashboard({ session, month, setMonth }) {
             <h3>Household ledger</h3>
             <p className="lede">One table for admin and members. Filter by person or type.</p>
           </div>
-          <Link className="btn" to="/income">Add a line</Link>
+          <div className="row">
+            <Link className="btn-ghost" to="/people">Household chat</Link>
+            <Link className="btn" to="/income">Add a line</Link>
+          </div>
         </div>
         <div className="filter-bar">
           {TYPES.map(([id, label]) => (

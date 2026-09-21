@@ -1,5 +1,4 @@
-import { assertPassword, cleanEmail, cleanText, cleanUsername, hashPassword, nowIso, randomBytes, randomId, verifyPassword } from "./security.js";
-import { bytesToBase32 } from "./totp.js";
+import { assertPassword, cleanEmail, cleanText, cleanUsername, hashPassword, nowIso, randomId, verifyPassword } from "./security.js";
 
 const KEY = "omh.accounts";
 
@@ -23,7 +22,6 @@ export function publicAccount(row) {
     email: row.email,
     username: row.username || "",
     providers: row.providers || [],
-    totpOn: Boolean(row.totpSecret && row.totpConfirmed),
     biometricOn: Boolean(row.biometricOn),
     createdAt: row.createdAt,
   };
@@ -75,8 +73,6 @@ export async function registerAccount({ name, username, email, password, provide
     email: clean,
     passwordHash: hashed.hash,
     passwordSalt: hashed.salt,
-    totpSecret: bytesToBase32(randomBytes(20)),
-    totpConfirmed: false,
     biometricOn: false,
     providers: provider ? [provider] : [],
     createdAt: nowIso(),
@@ -102,14 +98,4 @@ export function patchAccount(id, patch) {
   list[idx] = { ...list[idx], ...patch };
   save(list);
   return list[idx];
-}
-
-export function linkProvider(id, provider) {
-  const row = findAccountById(id);
-  if (!row) throw new Error("Account not found.");
-  const providers = [...(row.providers || [])];
-  if (!providers.some((item) => item.provider === provider.provider && item.subject === provider.subject)) {
-    providers.push(provider);
-  }
-  return patchAccount(id, { providers });
 }

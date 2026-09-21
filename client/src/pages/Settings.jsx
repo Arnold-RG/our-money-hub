@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { biometricLinked, platformUnlockReady, registerBiometric } from "../biometrics.js";
-import { copyText, joinUrl, qrDataUrl, shareInvite } from "../share.js";
+import { copyText, joinUrl, shareInvite } from "../share.js";
 import { oauthConfig, saveOauthConfig } from "../social.js";
 import { Field, Notice } from "../ui.jsx";
 
@@ -16,7 +16,6 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
   const [busy, setBusy] = useState(false);
   const [bioReady, setBioReady] = useState(false);
   const [bioOn, setBioOn] = useState(() => biometricLinked(session.user.id));
-  const [qr, setQr] = useState("");
   const [google, setGoogle] = useState(() => oauthConfig().google || "");
   const admin = session.user.role === "admin";
   const syncCode = admin ? (session.syncCode || api.syncCode()) : "";
@@ -26,11 +25,6 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
     platformUnlockReady().then(setBioReady);
   }, []);
 
-  useEffect(() => {
-    if (!url) return;
-    qrDataUrl(url).then(setQr).catch(() => setQr(""));
-  }, [url]);
-
   return (
     <>
       <header className="page-head">
@@ -39,8 +33,8 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <h2>Settings</h2>
           <p className="lede">
             {admin
-              ? "You manage the house, the invite, and the security stack. Members add and see the same books."
-              : "You can add and view every household line. Only an admin can change the house name or send invites."}
+              ? "You manage the house, the invite, and device security. Members add and see the same books, and everyone can chat."
+              : "You can add and view every household line and join the household chat. Only an admin can change the house name or send invites."}
           </p>
         </div>
       </header>
@@ -79,7 +73,6 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <article className="card">
             <h3>Invite members</h3>
             <p className="lede">Only the admin can send this. Members create their own username, email, and password, then they see and add to the same books.</p>
-            {qr && <img className="invite-qr" src={qr} alt="Household join QR code" />}
             <p className="hint">{url}</p>
             <textarea readOnly value={syncCode} rows={4} />
             <div className="row" style={{ marginTop: 10 }}>
@@ -101,10 +94,9 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <h3>Security stack</h3>
           <ol className="security-steps">
             <li><strong>Password</strong> — username or email, 10+ letters and numbers. The browser can store it.</li>
-            {admin ? <li><strong>Authenticator</strong> — admin only, 6-digit app code after password.</li> : <li><strong>Authenticator</strong> — not used for members.</li>}
             <li><strong>Biometric</strong> — Face, fingerprint, or Windows Hello on this device, for every person.</li>
             <li><strong>Session</strong> — closes after 20 idle minutes, or after 8 hours. Five failed sign-ins lock the login for 15 minutes.</li>
-            <li><strong>Vault</strong> — household books are encrypted on this device before they sync.</li>
+            <li><strong>Vault</strong> — household books and chat are encrypted on this device before they sync.</li>
           </ol>
           <form onSubmit={async (event) => {
             event.preventDefault();
@@ -149,14 +141,9 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
                   }}>Add Face or fingerprint</button>
                 )
             ) : (
-              <p className="hint">This browser has no platform authenticator. Use a phone with Face ID or a computer with Windows Hello.</p>
+              <p className="hint">This browser has no platform unlock. Use a phone with Face ID or a computer with Windows Hello.</p>
             )}
           </div>
-          {admin && (
-            <p className="hint" style={{ marginTop: 12 }}>
-              Authenticator status: {session.user.account?.totpOn ? "linked" : "required on the next admin sign-in"}.
-            </p>
-          )}
         </article>
 
         <article className="card">
@@ -174,7 +161,7 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
             setOk("Google sign-in ID saved on this device.");
           }}>
             <h3>Google sign-in</h3>
-            <p className="lede">Optional. A Google Cloud web client ID turns on Continue with Google for this household’s admin sign-in.</p>
+            <p className="lede">Optional. A Google Cloud web client ID turns on Continue with Google for this household.</p>
             <Field label="Google client ID" wide>
               <input value={google} onChange={(e) => setGoogle(e.target.value)} placeholder="….apps.googleusercontent.com" />
             </Field>

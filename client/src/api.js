@@ -42,7 +42,6 @@ import {
   refreshFromRemote,
 } from "./vault.js";
 import { findAccountByEmail, findAccountById, findAccountByLogin, findAccountByProvider, patchAccount, publicAccount, registerAccount, verifyAccount } from "./identity.js";
-import { totpMatch } from "./totp.js";
 import { joinUrl } from "./share.js";
 
 const LEDGERS = {
@@ -58,7 +57,7 @@ function grantsFor(user) {
     return {
       income: true, expenses: true, savings: true, projects: true, costs: true,
       exchange: true, plans: true, advisor: true,
-      people: isAdmin,
+      people: true,
       settings: true,
       invite: isAdmin,
       manage: isAdmin,
@@ -95,6 +94,52 @@ function requireGrant(module) {
   const grants = grantsFor(user);
   if (!grants[module]) throw new Error("You do not have access to this part of Our Money Hub.");
   return { user, grants, vault: currentVault() };
+}
+
+function requireAdmin() {
+  const user = requireUser();
+  if (user.role !== "admin") throw new Error("Only an admin can do that.");
+  return { user, grants: grantsFor(user), vault: currentVault() };
+}
+
+function memberBooks(person) {
+  const vault = currentVault();
+  const bounds = monthBounds();
+  const id = String(person.id);
+  const owned = (row) => String(row.owner_id) === id;
+  const inRange = (row, field) => row[field] >= bounds.start && row[field] <= bounds.end;
+  const income_cents = vault.incomes.filter((row) => owned(row) && inRange(row, "received_on")).reduce((sum, row) => sum + row.amount_cents, 0);
+  const expense_cents = vault.expenses.filter((row) => owned(row) && inRange(row, "spent_on")).reduce((sum, row) => sum + row.amount_cents, 0);
+  const cost_cents = vault.costs.filter((row) => owned(row) && inRange(row, "due_on")).reduce((sum, row) => sum + row.amount_cents, 0);
+  const savings = vault.savings.filter(owned).map((row) => ({
+    id: row.id,
+    name: row.name,
+    current_cents: row.current_cents,
+    target_cents: row.target_cents,
+  }));
+  const projects = vault.projects.filter(owned).map((row) => ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    budget_cents: row.budget_cents || row.target_cents || 0,
+    spent_cents: vault.projectEntries.filter((item) => item.project_id === row.id).reduce((sum, item) => sum + item.amount_cents, 0),
+  }));
+  return {
+    ...person,
+    month: bounds.month,
+    income_cents,
+    expense_cents,
+    cost_cents,
+    savings_cents: savings.reduce((sum, row) => sum + (row.current_cents || 0), 0),
+    surplus_cents: income_cents - expense_cents - cost_cents,
+    savings,
+    projects,
+  };
+}
+
+function chatList(vault) {
+  if (!Array.isArray(vault.messages)) vault.messages = [];
+  return vault.messages.slice(-200);
 }
 
 function logActivity(user, action, detail) {
@@ -167,7 +212,6 @@ export const api = {
     if (!user) return { user: null, currencies, houses, joinable: true };
     const account = findAccountById(session.accountId) || findAccountByEmail(user.email);
     const grants = grantsFor(user);
-    const isAdmin = user.role === "admin";
     const code = grants.invite ? getSyncCode() : "";
     return {
       user: { ...publicUser(user), account: publicAccount(account) },
@@ -178,9 +222,7 @@ export const api = {
       syncCode: code,
       joinUrl: code ? joinUrl(code) : "",
       houses,
-      needsTotp: Boolean(isAdmin && account && !account.totpConfirmed),
       needsBio: Boolean(account && !account.biometricOn),
-      totpSecret: isAdmin && account && !account.totpConfirmed ? account.totpSecret : "",
     };
   },
 
@@ -228,7 +270,7 @@ export const api = {
     writeSession(admin.id, { accountId: account.id });
     const code = getSyncCode();
     if (!code) throw new Error("The household was created, but a join code could not be generated. Try again.");
-    return { ok: true, syncCode: code, joinUrl: joinUrl(code), totpSecret: account.totpSecret, user: publicUser(admin) };
+    return { ok: true, syncCode: code, joinUrl: joinUrl(code), user: publicUser(admin) };
   },
 
   async join(body) {
@@ -262,7 +304,7 @@ export const api = {
       await persist();
     }
     writeSession(user.id, { accountId: account.id });
-    return { ok: true, totpSecret: "", user: publicUser(user) };
+    return { ok: true, user: publicUser(user) };
   },
 
   async login(body) {
@@ -282,7 +324,7 @@ export const api = {
       writeSession(user.id);
       logActivity(user, "login", `${user.name} signed in`);
       await persist();
-      return { ok: true, user: publicUser(user), needsTotp: user.role === "admin" };
+      return { ok: true, user: publicUser(user) };
     }
     noteLogin(login, true);
     if (hasLocalVault() && !isOpen()) {
@@ -291,19 +333,10 @@ export const api = {
     }
     const user = isOpen() ? currentVault().users.find((row) => row.email === account.email || row.username === account.username) : null;
     if (!user) throw new Error("This account is not in an open household yet. Create one or join with a code.");
-    if (user.role === "admin" && account.totpConfirmed) {
-      if (!body.totpCode) return { ok: false, needsTotp: true };
-      if (!(await totpMatch(account.totpSecret, body.totpCode))) throw new Error("That authenticator code is not valid.");
-    }
     writeSession(user.id, { accountId: account.id });
     logActivity(user, "login", `${user.name} signed in`);
     await persist();
-    return {
-      ok: true,
-      user: publicUser(user),
-      needsTotp: user.role === "admin" && !account.totpConfirmed,
-      totpSecret: user.role === "admin" && !account.totpConfirmed ? account.totpSecret : "",
-    };
+    return { ok: true, user: publicUser(user) };
   },
 
   async loginSocial(identity) {
@@ -327,34 +360,12 @@ export const api = {
     }
     const user = isOpen() ? currentVault().users.find((row) => row.email === account.email) : null;
     if (user) writeSession(user.id, { accountId: account.id });
-    const admin = user?.role === "admin";
     return {
       ok: true,
       linked: Boolean(user),
-      totpSecret: admin && !account.totpConfirmed ? account.totpSecret : "",
-      needsTotp: Boolean(admin && !account.totpConfirmed),
       account: publicAccount(account),
       user: user ? publicUser(user) : null,
     };
-  },
-
-  async confirmTotp(code) {
-    const session = readSession();
-    if (!session?.accountId) throw new Error("Please sign in first.");
-    const account = findAccountById(session.accountId);
-    if (!account) throw new Error("Account not found.");
-    if (!(await totpMatch(account.totpSecret, code))) throw new Error("That authenticator code is not valid.");
-    patchAccount(account.id, { totpConfirmed: true });
-    return { ok: true };
-  },
-
-  async verifyLoginTotp(code) {
-    const session = readSession();
-    if (!session) throw new Error("Please sign in first.");
-    const account = findAccountById(session.accountId) || (isOpen() ? findAccountByEmail(currentVault().users.find((row) => row.id === session.userId)?.email) : null);
-    if (!account?.totpSecret) throw new Error("No authenticator is linked to this account.");
-    if (!(await totpMatch(account.totpSecret, code))) throw new Error("That authenticator code is not valid.");
-    return { ok: true };
   },
 
   async switchHouse(id) {
@@ -386,12 +397,7 @@ export const api = {
     writeSession(user.id, { accountId: account?.id });
     logActivity(user, "login", `${user.name} signed in with biometric unlock`);
     await persist();
-    return {
-      ok: true,
-      user: publicUser(user),
-      needsTotp: user.role === "admin",
-      totpSecret: user.role === "admin" && account && !account.totpConfirmed ? account.totpSecret : "",
-    };
+    return { ok: true, user: publicUser(user) };
   },
 
   async logout() {
@@ -424,11 +430,35 @@ export const api = {
 
   async people() {
     requireGrant("people");
-    return { members: membersOf() };
+    return { members: membersOf().map((row) => memberBooks(row)) };
+  },
+
+  async chat() {
+    requireGrant("people");
+    await refreshFromRemote();
+    return { messages: chatList(currentVault()) };
+  },
+
+  async sendChat(text) {
+    const { user, vault } = requireGrant("people");
+    const body = cleanText(text, 800);
+    if (!body) throw new Error("Write a message first.");
+    if (!Array.isArray(vault.messages)) vault.messages = [];
+    vault.messages.push({
+      id: randomId(),
+      user_id: user.id,
+      name: user.name,
+      role: user.role === "spouse" ? "member" : user.role,
+      text: body,
+      created_at: nowIso(),
+    });
+    vault.messages = vault.messages.slice(-200);
+    await persist();
+    return { ok: true, messages: chatList(vault) };
   },
 
   async addPerson(body) {
-    const { user, vault } = requireGrant("people");
+    const { user, vault } = requireAdmin();
     const name = cleanText(body.name, 80);
     const email = cleanEmail(body.email);
     const role = body.role === "admin" ? "admin" : body.role === "guest" ? "guest" : "member";
@@ -464,7 +494,7 @@ export const api = {
   },
 
   async updateGrants(id, grants) {
-    const { user, vault } = requireGrant("people");
+    const { user, vault } = requireAdmin();
     const person = vault.users.find((row) => row.id === id);
     if (!person) throw new Error("Person not found.");
     if (person.role !== "guest") throw new Error("Household members already have full access.");
@@ -484,7 +514,7 @@ export const api = {
   },
 
   async resetPassword(id, password) {
-    const { vault } = requireGrant("people");
+    const { vault } = requireAdmin();
     const person = vault.users.find((row) => row.id === id);
     if (!person) throw new Error("Person not found.");
     assertPassword(password);
@@ -496,7 +526,7 @@ export const api = {
   },
 
   async removePerson(id) {
-    const { user, vault } = requireGrant("people");
+    const { user, vault } = requireAdmin();
     const person = vault.users.find((row) => row.id === id);
     if (!person) throw new Error("Person not found.");
     if (person.id === user.id) throw new Error("You cannot remove your own account.");

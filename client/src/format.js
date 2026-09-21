@@ -6,6 +6,16 @@ export function money(cents, currency = "PLN") {
   }).format((Number(cents) || 0) / 100);
 }
 
+export function prettyTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export function prettyDate(value) {
   if (!value) return "—";
   const iso = String(value);

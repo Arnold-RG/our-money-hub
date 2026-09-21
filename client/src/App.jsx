@@ -18,6 +18,7 @@ import { Advisor } from "./pages/Advisor.jsx";
 
 const NAV = [
   { to: "/", label: "Home", icon: "home", grant: "household" },
+  { to: "/people", label: "People", icon: "chat", grant: "people" },
   { to: "/income", label: "Income", icon: "in", grant: "income" },
   { to: "/expenses", label: "Expenses", icon: "out", grant: "expenses" },
   { to: "/savings", label: "Savings", icon: "save", grant: "savings" },
@@ -26,7 +27,6 @@ const NAV = [
   { to: "/exchange", label: "Exchange", icon: "calc", grant: "exchange" },
   { to: "/plans", label: "Plans", icon: "board", grant: "plans" },
   { to: "/advisor", label: "Advisor", icon: "idea", grant: "advisor" },
-  { to: "/people", label: "People", icon: "people", grant: "people" },
   { to: "/settings", label: "Settings", icon: "gear", grant: "settings" },
 ];
 
@@ -88,7 +88,7 @@ export default function App() {
   if (boot.error) {
     return <div className="auth-wrap"><p>{boot.error}</p></div>;
   }
-  if (!boot.user || boot.needsTotp || boot.needsBio) {
+  if (!boot.user || boot.needsBio) {
     return (
       <Routes>
         <Route path="/join/*" element={<Welcome boot={boot} onDone={refresh} />} />
@@ -133,6 +133,7 @@ export default function App() {
       <main className="main">
         <Routes>
           <Route path="/" element={<Dashboard session={session} month={month} setMonth={setMonth} />} />
+          <Route path="/people" element={gate(session, "people", <People session={session} onRefresh={refresh} />)} />
           <Route path="/income" element={gate(session, "income", <Ledger kind="income" session={session} month={month} setMonth={setMonth} />)} />
           <Route path="/expenses" element={gate(session, "expenses", <Ledger kind="expenses" session={session} month={month} setMonth={setMonth} />)} />
           <Route path="/savings" element={gate(session, "savings", <Savings session={session} />)} />
@@ -141,7 +142,6 @@ export default function App() {
           <Route path="/exchange" element={gate(session, "exchange", <Exchange session={session} />)} />
           <Route path="/plans" element={gate(session, "plans", <Plans session={session} />)} />
           <Route path="/advisor" element={gate(session, "advisor", <Advisor session={session} month={month} setMonth={setMonth} />)} />
-          <Route path="/people" element={gate(session, "people", <People session={session} onRefresh={refresh} />)} />
           <Route path="/settings" element={<Settings session={session} theme={theme} setTheme={setTheme} onRefresh={refresh} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

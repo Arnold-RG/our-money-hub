@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { api } from "../api.js";
 import { CURRENCY_CODES } from "../catalogs.js";
-import { otpauthUrl } from "../totp.js";
-import { codeFromInviteText, copyText, joinUrl, qrDataUrl, scanQrFromFile, shareInvite } from "../share.js";
+import { codeFromInviteText, copyText, joinUrl, shareInvite } from "../share.js";
 import { oauthConfig, saveOauthConfig, signInSocial } from "../social.js";
 import { hasBiometricForDevice, platformUnlockReady, registerBiometric, unlockWithBiometric } from "../biometrics.js";
 import { Field, Notice, OmhMark } from "../ui.jsx";
@@ -27,12 +26,9 @@ export function Welcome({ boot, onDone }) {
     householdName: "Our household",
     currency: "PLN",
     syncCode: urlCode,
-    totpCode: "",
     provider: null,
   });
-  const [invite, setInvite] = useState({ code: "", url: "", qr: "" });
-  const [totpSecret, setTotpSecret] = useState("");
-  const [totpQr, setTotpQr] = useState("");
+  const [invite, setInvite] = useState({ code: "", url: "" });
   const [bioReady, setBioReady] = useState(false);
   const [who, setWho] = useState(null);
 
@@ -57,20 +53,8 @@ export function Welcome({ boot, onDone }) {
   }, [boot?.user]);
 
   useEffect(() => {
-    if (boot?.needsTotp && boot.totpSecret) {
-      setTotpSecret(boot.totpSecret);
-      setView("totp");
-    } else if (boot?.needsTotp) {
-      setView("totp-login");
-    } else if (boot?.needsBio) {
-      setView("bio");
-    }
-  }, [boot?.needsTotp, boot?.needsBio, boot?.totpSecret]);
-
-  useEffect(() => {
-    if (!totpSecret || !form.email) return;
-    qrDataUrl(otpauthUrl(form.email, totpSecret)).then(setTotpQr).catch(() => {});
-  }, [totpSecret, form.email]);
+    if (boot?.needsBio) setView("bio");
+  }, [boot?.needsBio]);
 
   function set(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -79,21 +63,9 @@ export function Welcome({ boot, onDone }) {
   async function afterAuth(result) {
     if (result.user) setWho(result.user);
     if (result.syncCode) {
-      const url = result.joinUrl || joinUrl(result.syncCode);
-      setInvite({ code: result.syncCode, url, qr: await qrDataUrl(url) });
+      setInvite({ code: result.syncCode, url: result.joinUrl || joinUrl(result.syncCode) });
     }
-    const secret = result.totpSecret || totpSecret;
-    const role = result.user?.role || boot?.user?.role;
-    if (role === "admin" && result.needsTotp && !secret) {
-      setView("totp-login");
-      return;
-    }
-    if (role === "admin" && secret) {
-      setTotpSecret(secret);
-      setView("totp");
-      return;
-    }
-    if (bioReady && !(boot?.user?.account?.biometricOn)) {
+    if (bioReady && !(boot?.user?.account?.biometricOn) && !(result.user?.account?.biometricOn)) {
       setView("bio");
       return;
     }
@@ -135,12 +107,7 @@ export function Welcome({ boot, onDone }) {
     setBusy(true);
     setError("");
     try {
-      const result = await api.login(form);
-      if (result.needsTotp && !result.totpSecret) {
-        setView("totp-login");
-        return;
-      }
-      await afterAuth(result);
+      await afterAuth(await api.login(form));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -187,27 +154,6 @@ export function Welcome({ boot, onDone }) {
     }
   }
 
-  async function confirmTotp(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      if (view === "totp-login") await api.verifyLoginTotp(form.totpCode);
-      else await api.confirmTotp(form.totpCode);
-      if (bioReady && !(boot?.user?.account?.biometricOn)) setView("bio");
-      else if (invite.code || boot?.syncCode) {
-        const code = invite.code || boot.syncCode;
-        const url = invite.url || joinUrl(code);
-        setInvite({ code, url, qr: await qrDataUrl(url) });
-        setView("invite");
-      } else onDone();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function enrollBio() {
     setBusy(true);
     setError("");
@@ -217,8 +163,7 @@ export function Welcome({ boot, onDone }) {
       await api.markBiometric();
       if (invite.code || boot?.syncCode) {
         const code = invite.code || boot.syncCode;
-        const url = invite.url || joinUrl(code);
-        setInvite({ code, url, qr: await qrDataUrl(url) });
+        setInvite({ code, url: invite.url || joinUrl(code) });
         setView("invite");
       } else onDone();
     } catch (err) {
@@ -277,7 +222,6 @@ export function Welcome({ boot, onDone }) {
           <Brand />
           <h2>Share this house</h2>
           <p className="lede">Only you, the admin, can send this. Members open the link or paste the code, then create their own username, email, and password.</p>
-          {invite.qr && <img className="invite-qr" src={invite.qr} alt="Household join QR code" />}
           <p className="hint">{invite.url}</p>
           <textarea readOnly value={invite.code} rows={3} />
           <Notice error={error} ok={ok} />
@@ -299,25 +243,6 @@ export function Welcome({ boot, onDone }) {
     );
   }
 
-  if (view === "totp" || view === "totp-login") {
-    return (
-      <div className="auth-wrap">
-        <form className="auth-card" onSubmit={confirmTotp}>
-          <Brand />
-          <h2>Admin authenticator</h2>
-          <p className="lede">Only the household admin uses an authenticator app. Scan the QR, then enter the 6-digit code.</p>
-          {totpQr && view === "totp" ? <img className="invite-qr" src={totpQr} alt="Authenticator QR" /> : null}
-          {totpSecret && view === "totp" ? <p className="hint">Secret: {totpSecret}</p> : null}
-          <Notice error={error} />
-          <Field label="6-digit code" wide>
-            <input name="one-time-code" autoComplete="one-time-code" inputMode="numeric" value={form.totpCode} onChange={(e) => set("totpCode", e.target.value)} required />
-          </Field>
-          <button className="btn" style={{ marginTop: 14 }} disabled={busy}>{busy ? "Checking…" : "Confirm code"}</button>
-        </form>
-      </div>
-    );
-  }
-
   if (view === "bio") {
     return (
       <div className="auth-wrap">
@@ -327,7 +252,7 @@ export function Welcome({ boot, onDone }) {
           <p className="lede">Admins and members both save Face ID, Touch ID, Windows Hello, or a fingerprint on this device.</p>
           <Notice error={error} />
           <button className="btn bio-btn" disabled={busy} onClick={enrollBio}>{busy ? "Waiting for the sensor…" : "Add Face or fingerprint now"}</button>
-          {!bioReady && <p className="hint">This browser has no platform authenticator. Use a phone with Face ID or a computer with Windows Hello, then try again.</p>}
+          {!bioReady && <p className="hint">This browser has no platform unlock. Use a phone with Face ID or a computer with Windows Hello, then try again.</p>}
         </div>
       </div>
     );
@@ -368,23 +293,9 @@ export function Welcome({ boot, onDone }) {
         <Notice error={error} ok={ok} />
         <div className="form-grid" style={{ marginTop: 16 }}>
           {joining && (
-            <>
-              <Field label="Household join code or link" wide>
-                <input name="invite" value={form.syncCode} onChange={(e) => set("syncCode", codeFromInviteText(e.target.value))} required placeholder="Paste the special code or invite link" />
-              </Field>
-              <Field label="Or scan the QR from an admin device" wide>
-                <input type="file" accept="image/*" capture="environment" onChange={async (event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    set("syncCode", await scanQrFromFile(file));
-                    setError("");
-                  } catch (err) {
-                    setError(err.message);
-                  }
-                }} />
-              </Field>
-            </>
+            <Field label="Household join code or link" wide>
+              <input name="invite" value={form.syncCode} onChange={(e) => set("syncCode", codeFromInviteText(e.target.value))} required placeholder="Paste the special code or invite link" />
+            </Field>
           )}
           {(creating || joining) && (
             <>

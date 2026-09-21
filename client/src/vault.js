@@ -21,6 +21,12 @@ function b64ToBytes(value) {
   return Uint8Array.from(atob(value), (ch) => ch.charCodeAt(0));
 }
 
+function hydrateVault(vault) {
+  if (!vault) return vault;
+  if (!Array.isArray(vault.messages)) vault.messages = [];
+  return vault;
+}
+
 export function emptyVault() {
   return {
     version: 1,
@@ -35,6 +41,7 @@ export function emptyVault() {
     savingsEntries: [],
     projects: [],
     projectEntries: [],
+    messages: [],
     activity: [],
     lists: [
       { id: "list-backlog", title: "How we start", order: 0 },
@@ -91,7 +98,7 @@ export async function activateHouse(id) {
   const pack = JSON.parse(localStorage.getItem(`${BLOB_KEY}.${id}`) || localStorage.getItem(BLOB_KEY) || "null");
   if (!pack) throw new Error("That household copy is missing on this device.");
   vaultKey = b64ToBytes(house.key);
-  memory = await decryptJson(pack, vaultKey);
+  memory = hydrateVault(await decryptJson(pack, vaultKey));
   localStorage.setItem(BLOB_KEY, JSON.stringify(pack));
   localStorage.setItem(ACTIVE_KEY, id);
   return memory;
@@ -134,13 +141,13 @@ export async function openLocalVault() {
   const keyB64 = localStorage.getItem(KEY_KEY);
   if (!pack || !keyB64) return null;
   vaultKey = b64ToBytes(keyB64);
-  memory = await decryptJson(pack, vaultKey);
+  memory = hydrateVault(await decryptJson(pack, vaultKey));
   return memory;
 }
 
 export async function createVault(initial) {
   vaultKey = randomBytes(32);
-  memory = initial;
+  memory = hydrateVault(initial);
   localStorage.setItem(KEY_KEY, bytesToB64(vaultKey));
   localStorage.removeItem(META_KEY);
   await persist(true);
@@ -148,7 +155,7 @@ export async function createVault(initial) {
 }
 
 export async function importVault(pack, keyBytes, blobId) {
-  memory = await decryptJson(pack, keyBytes);
+  memory = hydrateVault(await decryptJson(pack, keyBytes));
   vaultKey = keyBytes;
   localStorage.setItem(KEY_KEY, bytesToB64(keyBytes));
   const meta = getMeta();
@@ -228,29 +235,27 @@ async function createBytebin(body) {
 async function pushRemote(pack, createRemote) {
   const meta = getMeta();
   const body = JSON.stringify({ v: 1, ...pack, revision: memory.revision });
-  if (!meta.blobId || createRemote || meta.host === "bytebin") {
+  if (!meta.blobId || createRemote) {
     let created = null;
-    const errors = [];
-    for (const maker of [createBytebin, createJsonBlob]) {
+    for (const maker of [createJsonBlob, createBytebin]) {
       try {
         created = await maker(body);
         break;
-      } catch (err) {
-        errors.push(err.message);
+      } catch {
+        /* try the other host */
       }
     }
     if (!created) throw new Error("Could not create a household join code. Try again on a network.");
     setMeta({ blobId: created.blobId, host: created.host });
     return;
   }
-  const res = await fetch(`${JSONBLOB}/${meta.blobId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body,
-  });
-  if (!res.ok) {
-    const created = await createBytebin(body);
-    setMeta({ blobId: created.blobId, host: created.host });
+  if (meta.host !== "bytebin" && String(meta.blobId).includes("-")) {
+    const res = await fetch(`${JSONBLOB}/${meta.blobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body,
+    });
+    if (res.ok) return;
   }
 }
 
@@ -281,7 +286,7 @@ export async function refreshFromRemote() {
   try {
     const pack = await fetchPack(meta.blobId);
     if (!pack) return memory;
-    const remote = await decryptJson(pack, vaultKey);
+    const remote = hydrateVault(await decryptJson(pack, vaultKey));
     if ((remote.revision || 0) > (memory?.revision || 0)) {
       memory = remote;
       localStorage.setItem(BLOB_KEY, JSON.stringify({ iv: pack.iv, ct: pack.ct }));
