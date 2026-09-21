@@ -25,7 +25,7 @@ export function Dashboard({ session, month, setMonth }) {
         <div>
           <p className="kicker">{longDate()}</p>
           <h2>Waiting for access</h2>
-          <p className="lede">The household books are closed to this account until the admin opens a door in People.</p>
+          <p className="lede">The household books are closed to this account until an admin grants access in People.</p>
         </div>
       </header>
     );

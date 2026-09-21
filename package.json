@@ -2,7 +2,7 @@
   "name": "our-money-hub",
   "version": "1.0.0",
   "private": true,
-  "description": "Our Money Hub (OMH) — a private household ledger for two.",
+  "description": "Our Money Hub (OMH) — private household books, each with its own admins.",
   "type": "module",
   "scripts": {
     "dev": "vite --config client/vite.config.js",
@@ -10,6 +10,7 @@
     "preview": "vite preview --config client/vite.config.js --host"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.2"

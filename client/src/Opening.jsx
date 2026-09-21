@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { OmhMark } from "./ui.jsx";
 
 export function Opening({ onDone }) {
-  const [phase, setPhase] = useState("idle");
+  const [phase, setPhase] = useState("spark");
 
   useEffect(() => {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -10,16 +10,12 @@ export function Opening({ onDone }) {
       onDone();
       return undefined;
     }
-    const start = window.setTimeout(() => setPhase("crack"), 700);
-    const open = window.setTimeout(() => setPhase("open"), 1700);
-    const light = window.setTimeout(() => setPhase("flood"), 2800);
-    const end = window.setTimeout(() => finish(), 4300);
-    return () => {
-      window.clearTimeout(start);
-      window.clearTimeout(open);
-      window.clearTimeout(light);
-      window.clearTimeout(end);
-    };
+    const ring = window.setTimeout(() => setPhase("rings"), 400);
+    const coin = window.setTimeout(() => setPhase("coin"), 1100);
+    const word = window.setTimeout(() => setPhase("word"), 2000);
+    const fade = window.setTimeout(() => setPhase("fade"), 3000);
+    const end = window.setTimeout(() => finish(), 3800);
+    return () => [ring, coin, word, fade, end].forEach((id) => window.clearTimeout(id));
   }, []);
 
   function finish() {
@@ -28,24 +24,17 @@ export function Opening({ onDone }) {
   }
 
   return (
-    <div className={`opening opening-${phase}`} role="dialog" aria-label="Opening Our Money Hub">
-      <div className="opening-light" />
-      <div className="opening-rays" />
-      <div className="door door-left">
-        <div className="door-face">
-          <span>OUR</span>
-          <b>O</b>
-        </div>
-      </div>
-      <div className="door door-right">
-        <div className="door-face">
-          <span>HUB</span>
-          <b>H</b>
-        </div>
-      </div>
-      <div className="opening-seal">
+    <div className={`genesis genesis-${phase}`} role="dialog" aria-label="Opening Our Money Hub">
+      <div className="genesis-sky" />
+      <div className="genesis-bloom" />
+      {Array.from({ length: 18 }).map((_, i) => <i key={i} className={`dust dust-${i + 1}`} />)}
+      <div className="genesis-ring r1" />
+      <div className="genesis-ring r2" />
+      <div className="genesis-ring r3" />
+      <div className="genesis-core">
         <div className="brand-mark opening-mark"><OmhMark live /></div>
         <p>Our Money Hub</p>
+        <span>Private household books</span>
       </div>
       <button className="opening-skip" type="button" onClick={finish}>Skip</button>
     </div>

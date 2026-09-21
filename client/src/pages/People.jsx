@@ -35,7 +35,7 @@ export function People({ session, onRefresh }) {
     try {
       await api.addPerson(creating);
       setCreating(null);
-      setOk("Account created. They can sign in with the email and password you set.");
+      setOk("Account created. They still need their own authenticator and Face or fingerprint on their device.");
       await load();
       onRefresh?.();
     } catch (err) {
@@ -49,12 +49,13 @@ export function People({ session, onRefresh }) {
     <>
       <header className="page-head">
         <div>
-          <p className="kicker">Who may enter</p>
+          <p className="kicker">Who may enter this house</p>
           <h2>People</h2>
-          <p className="lede">You and your partner already share every account. Guests stay outside the household books unless you open a door.</p>
+          <p className="lede">This household can have more than one admin. New people usually join with the special code, invite link, or QR from an admin device. You can also add an admin, a member, or a guest here.</p>
         </div>
         <div className="row">
-          <button className="btn-ghost" onClick={() => setCreating({ name: "", email: "", password: "", role: "spouse", grants: {} })}>Add partner</button>
+          <button className="btn-ghost" onClick={() => setCreating({ name: "", email: "", password: "", role: "admin", grants: {} })}>Add admin</button>
+          <button className="btn-ghost" onClick={() => setCreating({ name: "", email: "", password: "", role: "member", grants: {} })}>Add member</button>
           <button className="btn" onClick={() => setCreating({ name: "", email: "", password: "", role: "guest", grants: {} })}>Invite guest</button>
         </div>
       </header>
@@ -64,7 +65,7 @@ export function People({ session, onRefresh }) {
           <article className="card" key={person.id}>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <h3>{person.name}</h3>
-              <span className="tag copper">{person.role}</span>
+              <span className="tag copper">{person.role === "spouse" ? "member" : person.role}</span>
             </div>
             <p className="lede">{person.email}</p>
             {person.role === "guest" ? (
@@ -77,13 +78,13 @@ export function People({ session, onRefresh }) {
                 }}
               />
             ) : (
-              <p className="lede">Full household access. No extra permission is required between the two of you.</p>
+              <p className="lede">{person.role === "admin" ? "Admin of this household. They can invite people and manage the house." : "Full household access. No extra permission is required."}</p>
             )}
             <div className="row" style={{ marginTop: 12 }}>
               <button className="btn-ghost" onClick={() => setReset({ id: person.id, name: person.name, password: "" })}>Reset password</button>
-              {person.role !== "admin" && (
+              {person.id !== session.user.id && (
                 <button className="btn-ghost" onClick={async () => {
-                  if (!window.confirm(`Remove ${person.name} from Our Money Hub?`)) return;
+                  if (!window.confirm(`Remove ${person.name} from this household?`)) return;
                   await api.removePerson(person.id);
                   await load();
                   onRefresh?.();
@@ -95,8 +96,14 @@ export function People({ session, onRefresh }) {
       </section>
 
       {creating && (
-        <Modal title={creating.role === "spouse" ? "Add your partner" : "Invite a guest"} onClose={() => setCreating(null)} footer={<><button className="btn-ghost" onClick={() => setCreating(null)}>Cancel</button><button className="btn" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create account"}</button></>}>
-          <p className="lede">{creating.role === "spouse" ? "They will see and edit every income, expense, pot, and project — the same as you." : "Guests cannot see your household accounts until you switch on specific books."}</p>
+        <Modal title={creating.role === "admin" ? "Add an admin" : creating.role === "member" ? "Add a member" : "Invite a guest"} onClose={() => setCreating(null)} footer={<><button className="btn-ghost" onClick={() => setCreating(null)}>Cancel</button><button className="btn" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create account"}</button></>}>
+          <p className="lede">
+            {creating.role === "admin"
+              ? "Another admin can invite people, share the QR, and manage this house."
+              : creating.role === "member"
+                ? "Members see and edit the household books. They still sign in with their own email, password, authenticator, and biometric."
+                : "Guests cannot see household accounts until you switch on specific books."}
+          </p>
           <div className="form-grid">
             <Field label="Name" wide><input value={creating.name} onChange={(e) => setCreating({ ...creating, name: e.target.value })} /></Field>
             <Field label="Email"><input type="email" value={creating.email} onChange={(e) => setCreating({ ...creating, email: e.target.value })} /></Field>

@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { currentMonth } from "./format.js";
 import { clearSession, touchSession } from "./security.js";
 import { Icon, OmhMark } from "./ui.jsx";
-import { Auth } from "./pages/Auth.jsx";
+import { Welcome } from "./pages/Welcome.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
 import { Ledger } from "./pages/Ledger.jsx";
 import { Savings } from "./pages/Savings.jsx";
@@ -88,11 +88,15 @@ export default function App() {
   if (boot.error) {
     return <div className="auth-wrap"><p>{boot.error}</p></div>;
   }
-  if (boot.needsSetup) {
-    return <Auth mode="setup" currencies={boot.currencies || []} onDone={refresh} />;
-  }
-  if (!boot.user) {
-    return <Auth mode="login" onDone={refresh} />;
+  if (!boot.user || boot.needsTotp || boot.needsBio) {
+    return (
+      <Routes>
+        <Route path="/join/*" element={<Welcome boot={boot} onDone={refresh} />} />
+        <Route path="/create" element={<Welcome boot={boot} onDone={refresh} />} />
+        <Route path="/signin" element={<Welcome boot={boot} onDone={refresh} />} />
+        <Route path="*" element={<Welcome boot={boot} onDone={refresh} />} />
+      </Routes>
+    );
   }
 
   const session = boot;
@@ -120,7 +124,7 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="who">
             <strong>{session.user.name}</strong>
-            <span>{session.user.role === "admin" ? "Admin · full household" : session.user.role === "spouse" ? "Partner · full household" : "Guest"}</span>
+            <span>{roleLine(session.user.role)}</span>
           </div>
           <button className="btn-ghost" onClick={async () => { await api.logout(); refresh(); }}>Sign out</button>
         </div>
@@ -165,6 +169,12 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function roleLine(role) {
+  if (role === "admin") return "Admin of this household";
+  if (role === "member" || role === "spouse") return "Member · full household";
+  return "Guest";
 }
 
 function gate(session, grant, node) {

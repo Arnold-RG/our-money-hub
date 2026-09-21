@@ -112,10 +112,11 @@ export function noteLogin(email, ok) {
   localStorage.setItem("omh.lock", JSON.stringify(all));
 }
 
-export function writeSession(userId) {
+export function writeSession(userId, extra = {}) {
   const now = Date.now();
   sessionStorage.setItem("omh.sid", JSON.stringify({
     userId,
+    accountId: extra.accountId || userId,
     exp: now + SESSION_MS,
     idle: now + IDLE_MS,
   }));
