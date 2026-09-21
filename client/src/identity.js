@@ -1,4 +1,4 @@
-import { assertPassword, cleanEmail, cleanText, hashPassword, nowIso, randomBytes, randomId, verifyPassword } from "./security.js";
+import { assertPassword, cleanEmail, cleanText, cleanUsername, hashPassword, nowIso, randomBytes, randomId, verifyPassword } from "./security.js";
 import { bytesToBase32 } from "./totp.js";
 
 const KEY = "omh.accounts";
@@ -21,6 +21,7 @@ export function publicAccount(row) {
     id: row.id,
     name: row.name,
     email: row.email,
+    username: row.username || "",
     providers: row.providers || [],
     totpOn: Boolean(row.totpSecret && row.totpConfirmed),
     biometricOn: Boolean(row.biometricOn),
@@ -40,16 +41,37 @@ export function findAccountByProvider(provider, subject) {
   return load().find((row) => (row.providers || []).some((item) => item.provider === provider && item.subject === subject)) || null;
 }
 
-export async function registerAccount({ name, email, password, provider }) {
+export function findAccountByUsername(username) {
+  try {
+    const clean = cleanUsername(username);
+    return load().find((row) => row.username === clean) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function findAccountByLogin(login) {
+  const value = String(login || "").trim();
+  if (!value) return null;
+  if (value.includes("@")) return findAccountByEmail(value);
+  return findAccountByUsername(value) || findAccountByEmail(value);
+}
+
+export async function registerAccount({ name, username, email, password, provider }) {
   const clean = cleanEmail(email);
   if (!clean || !cleanText(name, 80)) throw new Error("Name and email are required.");
+  const userName = username
+    ? cleanUsername(username)
+    : cleanUsername(`${String(email).split("@")[0].replace(/[^a-zA-Z0-9._-]/g, "") || "user"}omh`.slice(0, 32));
   if (findAccountByEmail(clean)) throw new Error("That email already has an Our Money Hub account on this device.");
+  if (findAccountByUsername(userName)) throw new Error("That username is already taken on this device.");
   if (!provider) assertPassword(password);
   else if (password) assertPassword(password);
   const hashed = password ? await hashPassword(password) : { hash: "", salt: "" };
   const row = {
     id: randomId(),
     name: cleanText(name, 80),
+    username: userName,
     email: clean,
     passwordHash: hashed.hash,
     passwordSalt: hashed.salt,
@@ -65,8 +87,8 @@ export async function registerAccount({ name, email, password, provider }) {
   return row;
 }
 
-export async function verifyAccount(email, password) {
-  const row = findAccountByEmail(email);
+export async function verifyAccount(login, password) {
+  const row = findAccountByLogin(login);
   if (!row) return null;
   if (!row.passwordHash) return null;
   const ok = await verifyPassword(password, row.passwordHash, row.passwordSalt);

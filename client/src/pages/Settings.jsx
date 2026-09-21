@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { biometricLinked, platformUnlockReady, registerBiometric } from "../biometrics.js";
-import { joinUrl, qrDataUrl } from "../share.js";
+import { copyText, joinUrl, qrDataUrl, shareInvite } from "../share.js";
 import { oauthConfig, saveOauthConfig } from "../social.js";
 import { Field, Notice } from "../ui.jsx";
 
@@ -20,6 +20,7 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
   const [oauth, setOauth] = useState(() => oauthConfig());
   const [nextHouse, setNextHouse] = useState({
     name: session.user.name,
+    username: session.user.username || "",
     email: session.user.email,
     password: "",
     householdName: "",
@@ -107,16 +108,24 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           </form>
         )}
 
-        {session.grants.settings && (
+        {session.grants.invite && (
           <article className="card">
-            <h3>Invite this household</h3>
-            <p className="lede">Members join with this special code, the link, or by scanning the QR on this admin device. They still create their own login.</p>
+            <h3>Invite members</h3>
+            <p className="lede">Only the household admin can send this. Members open the link or paste the code, then create their own username, email, and password.</p>
             {qr && <img className="invite-qr" src={qr} alt="Household join QR code" />}
             <p className="hint">{url}</p>
             <textarea readOnly value={syncCode} rows={4} />
             <div className="row" style={{ marginTop: 10 }}>
-              <button className="btn-ghost" type="button" onClick={() => navigator.clipboard.writeText(syncCode || "")}>Copy code</button>
-              <button className="btn-ghost" type="button" onClick={() => navigator.clipboard.writeText(url)}>Copy link</button>
+              <button className="btn" type="button" onClick={async () => {
+                try {
+                  const how = await shareInvite({ url, code: syncCode, name: house.name });
+                  setOk(how === "shared" ? "Invite sent from this device." : "Link and code copied.");
+                } catch (err) {
+                  setError(err.message);
+                }
+              }}>Send invite</button>
+              <button className="btn-ghost" type="button" onClick={async () => { await copyText(url); setOk("Join link copied."); }}>Copy link</button>
+              <button className="btn-ghost" type="button" onClick={async () => { await copyText(syncCode || ""); setOk("Join code copied."); }}>Copy code</button>
             </div>
           </article>
         )}
@@ -169,8 +178,9 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <p className="lede">Anyone can open their own house. This does not replace the house you are in; both stay on this device.</p>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <Field label="Your name"><input value={nextHouse.name} onChange={(e) => setNextHouse({ ...nextHouse, name: e.target.value })} required /></Field>
-            <Field label="Email"><input type="email" value={nextHouse.email} onChange={(e) => setNextHouse({ ...nextHouse, email: e.target.value })} required /></Field>
-            <Field label="Password" wide><input type="password" value={nextHouse.password} onChange={(e) => setNextHouse({ ...nextHouse, password: e.target.value })} required /></Field>
+            <Field label="Username"><input autoComplete="username" value={nextHouse.username} onChange={(e) => setNextHouse({ ...nextHouse, username: e.target.value })} required /></Field>
+            <Field label="Email"><input type="email" autoComplete="email" value={nextHouse.email} onChange={(e) => setNextHouse({ ...nextHouse, email: e.target.value })} required /></Field>
+            <Field label="Password" wide><input type="password" autoComplete="new-password" value={nextHouse.password} onChange={(e) => setNextHouse({ ...nextHouse, password: e.target.value })} required /></Field>
             <Field label="New household name" wide><input value={nextHouse.householdName} onChange={(e) => setNextHouse({ ...nextHouse, householdName: e.target.value })} required /></Field>
           </div>
           <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Create household</button>
@@ -181,7 +191,7 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <p className="lede">At least 10 characters, with letters and numbers. Sessions close after 20 idle minutes.</p>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <Field label="Current" wide>
-              <input type="password" value={pass.currentPassword} onChange={(e) => setPass({ ...pass, currentPassword: e.target.value })} autoComplete="current-password" />
+            <input type="password" value={pass.currentPassword} onChange={(e) => setPass({ ...pass, currentPassword: e.target.value })} autoComplete="current-password" name="current-password" />
             </Field>
             <Field label="New password" wide>
               <input type="password" value={pass.nextPassword} onChange={(e) => setPass({ ...pass, nextPassword: e.target.value })} autoComplete="new-password" />
@@ -190,10 +200,12 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Update password</button>
         </form>
 
+        {session.user.role === "admin" && (
         <article className="card">
           <h3>Authenticator app</h3>
-          <p className="lede">Google Authenticator, Authy, or Microsoft Authenticator is required to sign in. This account {session.user.account?.totpOn ? "already has an authenticator linked." : "still needs an authenticator before the books stay open."}</p>
+          <p className="lede">Only the household admin uses Google Authenticator, Authy, or Microsoft Authenticator. This account {session.user.account?.totpOn ? "already has an authenticator linked." : "still needs an authenticator before the books stay open."}</p>
         </article>
+        )}
 
         <article className="card">
           <h3>Display</h3>
@@ -210,7 +222,7 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
 
         <article className="card">
           <h3>Face, fingerprint, or Windows Hello</h3>
-          <p className="lede">A biometric unlock is required on each device before the household books open.</p>
+          <p className="lede">Admins and members both use Face ID, Touch ID, Windows Hello, or a fingerprint on this device.</p>
           {bioReady ? (
             <div className="row">
               {!bioOn && (

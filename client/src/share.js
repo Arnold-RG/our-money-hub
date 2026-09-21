@@ -22,6 +22,37 @@ export async function qrDataUrl(text) {
   });
 }
 
+export async function copyText(value) {
+  const text = String(value || "");
+  if (!text) throw new Error("Nothing to copy.");
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.setAttribute("readonly", "true");
+    box.style.position = "fixed";
+    box.style.left = "-9999px";
+    document.body.appendChild(box);
+    box.select();
+    document.execCommand("copy");
+    box.remove();
+    return true;
+  }
+}
+
+export async function shareInvite({ url, code, name }) {
+  const title = "Join our household on Our Money Hub";
+  const text = `Join ${name || "our household"} in Our Money Hub.\nLink: ${url}\nCode: ${code}`;
+  if (navigator.share) {
+    await navigator.share({ title, text, url });
+    return "shared";
+  }
+  await copyText(`${url}\n${code}`);
+  return "copied";
+}
+
 export async function scanQrFromFile(file) {
   if (!file) throw new Error("Choose a photo of the household QR code.");
   if (!window.BarcodeDetector) {

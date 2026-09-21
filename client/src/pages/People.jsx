@@ -51,11 +51,9 @@ export function People({ session, onRefresh }) {
         <div>
           <p className="kicker">Who may enter this house</p>
           <h2>People</h2>
-          <p className="lede">This household can have more than one admin. New people usually join with the special code, invite link, or QR from an admin device. You can also add an admin, a member, or a guest here.</p>
+          <p className="lede">This household can have more than one admin. Members join themselves with the link or code from Settings. They create their own username, email, and password. You can still add a guest here.</p>
         </div>
         <div className="row">
-          <button className="btn-ghost" onClick={() => setCreating({ name: "", email: "", password: "", role: "admin", grants: {} })}>Add admin</button>
-          <button className="btn-ghost" onClick={() => setCreating({ name: "", email: "", password: "", role: "member", grants: {} })}>Add member</button>
           <button className="btn" onClick={() => setCreating({ name: "", email: "", password: "", role: "guest", grants: {} })}>Invite guest</button>
         </div>
       </header>

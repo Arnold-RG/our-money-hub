@@ -1,6 +1,6 @@
 # Our Money Hub (OMH)
 
-Private household books. Anyone can create their own household. Members join with a special code, an invite link, or a QR code shown on an admin device. The books are kept in Polish złoty by default.
+Private household books. Anyone can create their own household. After an admin creates a house, the app generates a join code and a shareable link. Only that admin can send them. Members join with the code or link and create their own username, email, and password. The books are kept in Polish złoty by default.
 
 ## Live site
 
@@ -9,14 +9,15 @@ https://arnold-rg.github.io/our-money-hub/
 ## How to start
 
 1. Open the live site.
-2. Choose **Create a household**. Add your name, email, and a password of at least 10 characters with letters and numbers. You can also continue with Google, Apple, Facebook, Microsoft, or GitHub (email plus an OMH password if that provider is not switched on yet).
-3. Scan the authenticator QR with Google Authenticator, Authy, or Microsoft Authenticator, then enter the 6-digit code.
-4. Add Face ID, Touch ID, Windows Hello, or a fingerprint. This is required on each device.
-5. Leave the main currency as **PLN**, or change it later in Settings.
-6. Share the household join code, invite link, or QR from Settings on an admin device.
-7. The other person opens the same site, chooses **Join with a code**, pastes the code or scans the QR, and creates their own login, authenticator, and biometric.
+2. Choose **Create a household**. Add your name, username, email, and a password of at least 10 characters with letters and numbers. You can also continue with Google. The browser can save those login details.
+3. Scan the authenticator QR (admin only) with Google Authenticator, Authy, or Microsoft Authenticator, then enter the 6-digit code.
+4. Add Face ID, Touch ID, Windows Hello, or a fingerprint. Admins and members both do this on each device.
+5. The app then shows the household join **code** and **link**. Use **Send invite**, **Copy link**, or **Copy code**. Only the admin can share these. Find them again later in Settings.
+6. The other person opens the same site, chooses **Join with a code or link**, pastes the code or opens the link, and creates their own username, email, and password. Then they add Face or fingerprint.
 
-There is no single master account for the whole app. Each household has its own admins. The join code is a household key. Do not post it in public messages or on this repository.
+There is no single master account for the whole app. The join code is a household key. Do not post it in public messages or on this repository.
+
+Google sign-in uses a Google Cloud web client ID. Add it once on the sign-in screen or in Settings. Authorized JavaScript origin: the live site origin. Authorized redirect: `https://arnold-rg.github.io/our-money-hub/oauth-google.html`.
 
 ## What is inside
 
@@ -27,16 +28,15 @@ There is no single master account for the whole app. Each household has its own 
 - Currency exchange for PLN, EUR, USD, RWF, XAF (Congo-Brazzaville), CDF, and more
 - Plans: a board for writing a project from the first step to the last
 - Advisor: recalculates income, spending, and savings, then suggests how to keep more and live on this month’s pay
-- People: more than one admin, members with full access, and guests with limited access
-- Face ID, fingerprint, Windows Hello, and an authenticator app on sign-up and sign-in
+- People: household members, plus guests with limited access
+- Face ID, fingerprint, or Windows Hello for every person; authenticator app for the admin only
 
 ## Security
 
-- Every person creates their own email and password, or links a social account.
-- An authenticator app and a device biometric are required.
+- Members create their own username, email, and password. Admins can also use Google.
 - Passwords are stored as salted PBKDF2 hashes, never as plain text.
 - Household data is encrypted with AES-GCM before it is saved or synced.
-- Five failed sign-ins lock that email for fifteen minutes.
+- Five failed sign-ins lock that login for fifteen minutes.
 - A signed-in session closes after twenty idle minutes, or after eight hours.
 - GitHub hosts only the application files. Household money records are not stored in this repository.
 

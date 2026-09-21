@@ -158,6 +158,14 @@ export function cleanEmail(value) {
   return String(value || "").trim().toLowerCase().slice(0, 160);
 }
 
+export function cleanUsername(value) {
+  const raw = String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
+  if (raw.length < 3 || raw.length > 32) {
+    throw new Error("Username must be 3 to 32 letters, numbers, dots, or dashes.");
+  }
+  return raw;
+}
+
 export function parseCents(amount) {
   const n = Number(amount);
   if (!Number.isFinite(n) || n < 0) return null;

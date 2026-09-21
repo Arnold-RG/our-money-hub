@@ -11,6 +11,7 @@ import {
   cleanEmail,
   cleanText,
   clearSession,
+  cleanUsername,
   decodeSyncCode,
   guardLogin,
   hashPassword,
@@ -40,7 +41,7 @@ import {
   pullRemote,
   refreshFromRemote,
 } from "./vault.js";
-import { findAccountByEmail, findAccountById, findAccountByProvider, patchAccount, publicAccount, registerAccount, verifyAccount } from "./identity.js";
+import { findAccountByEmail, findAccountById, findAccountByLogin, findAccountByProvider, patchAccount, publicAccount, registerAccount, verifyAccount } from "./identity.js";
 import { totpMatch } from "./totp.js";
 import { joinUrl } from "./share.js";
 
@@ -58,6 +59,7 @@ function grantsFor(user) {
       exchange: true, plans: true, advisor: true,
       people: user.role === "admin",
       settings: true,
+      invite: user.role === "admin",
       household: true,
     };
   }
@@ -73,6 +75,7 @@ function grantsFor(user) {
     advisor: Boolean(grant.advisor),
     people: false,
     settings: false,
+    invite: false,
     household: false,
   };
 }
@@ -80,12 +83,12 @@ function grantsFor(user) {
 function emptyGrants() {
   return {
     income: false, expenses: false, savings: false, projects: false, costs: false,
-    exchange: false, plans: false, advisor: false, people: false, settings: false, household: false,
+    exchange: false, plans: false, advisor: false, people: false, settings: false, invite: false, household: false,
   };
 }
 
 function publicUser(user) {
-  return { id: user.id, householdId: "home", name: user.name, email: user.email, role: user.role };
+  return { id: user.id, householdId: "home", name: user.name, username: user.username || "", email: user.email, role: user.role };
 }
 
 function requireUser() {
@@ -175,41 +178,47 @@ export const api = {
     if (!user) return { user: null, currencies, houses, joinable: true };
     const account = findAccountById(session.accountId) || findAccountByEmail(user.email);
     const grants = grantsFor(user);
-    const code = grants.settings ? getSyncCode() : "";
+    const isAdmin = user.role === "admin";
+    const code = grants.invite ? getSyncCode() : "";
     return {
       user: { ...publicUser(user), account: publicAccount(account) },
       grants,
       household: currentVault().household,
-      members: grants.household ? membersOf() : [{ id: user.id, name: user.name, email: user.email, role: user.role, grants }],
+      members: grants.household ? membersOf() : [{ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, grants }],
       catalogs: catalogs(),
       syncCode: code,
       joinUrl: code ? joinUrl(code) : "",
       houses,
-      needsTotp: Boolean(account && !account.totpConfirmed),
+      needsTotp: Boolean(isAdmin && account && !account.totpConfirmed),
       needsBio: Boolean(account && !account.biometricOn),
-      totpSecret: account && !account.totpConfirmed ? account.totpSecret : "",
+      totpSecret: isAdmin && account && !account.totpConfirmed ? account.totpSecret : "",
     };
   },
 
   async setup(body) {
     const name = cleanText(body.adminName || body.name, 80);
+    const username = body.username ? cleanUsername(body.username) : "";
     const email = cleanEmail(body.adminEmail || body.email);
     const password = String(body.adminPassword || body.password || "");
     const householdName = cleanText(body.householdName, 80) || "Our household";
     const currency = CURRENCY_CODES.includes(body.currency) ? body.currency : "PLN";
     const provider = body.provider || null;
     if (!name || !email) throw new Error("Add your name and email.");
-    let account = findAccountByEmail(email);
+    if (!username) throw new Error("Choose a username.");
+    let account = findAccountByEmail(email) || findAccountByLogin(username);
     if (!provider) {
       if (!account) assertPassword(password);
-      else if (!(await verifyAccount(email, password))) throw new Error("Password does not match this email.");
+      else if (!(await verifyAccount(email, password)) && !(await verifyAccount(username, password))) {
+        throw new Error("Password does not match this account.");
+      }
     }
-    if (!account) account = await registerAccount({ name, email, password, provider });
+    if (!account) account = await registerAccount({ name, username, email, password, provider });
     const hashed = account.passwordHash ? { hash: account.passwordHash, salt: account.passwordSalt } : await hashPassword(password || randomId());
     const vault = emptyVault();
     const admin = {
       id: randomId(),
       name,
+      username: account.username || username,
       email,
       passwordHash: hashed.hash,
       passwordSalt: hashed.salt,
@@ -228,28 +237,31 @@ export const api = {
     });
     await createVault(vault);
     writeSession(admin.id, { accountId: account.id });
-    return { ok: true, syncCode: getSyncCode(), joinUrl: joinUrl(getSyncCode()), totpSecret: account.totpSecret, user: publicUser(admin) };
+    const code = getSyncCode();
+    if (!code) throw new Error("The household was created, but a join code could not be generated. Try again.");
+    return { ok: true, syncCode: code, joinUrl: joinUrl(code), totpSecret: account.totpSecret, user: publicUser(admin) };
   },
 
   async join(body) {
     const { blobId, keyBytes } = decodeSyncCode(body.syncCode);
     await pullRemote(blobId, keyBytes);
     const name = cleanText(body.name, 80);
+    const username = cleanUsername(body.username);
     const email = cleanEmail(body.email);
     const password = String(body.password || "");
-    const provider = body.provider || null;
-    if (!name || !email) throw new Error("Add your name and email to join.");
-    if (!provider) assertPassword(password);
+    if (!name || !email) throw new Error("Add your name, username, and email to join.");
+    assertPassword(password);
     let account = findAccountByEmail(email);
-    if (!account) account = await registerAccount({ name, email, password, provider });
+    if (!account) account = await registerAccount({ name, username, email, password });
     let user = currentVault().users.find((row) => row.email === email);
     if (!user) {
       const hashed = account.passwordHash
         ? { hash: account.passwordHash, salt: account.passwordSalt }
-        : await hashPassword(password || randomId());
+        : await hashPassword(password);
       user = {
         id: randomId(),
         name,
+        username: account.username || username,
         email,
         passwordHash: hashed.hash,
         passwordSalt: hashed.salt,
@@ -261,53 +273,61 @@ export const api = {
       await persist();
     }
     writeSession(user.id, { accountId: account.id });
-    return { ok: true, totpSecret: account.totpSecret, user: publicUser(user) };
+    return { ok: true, totpSecret: "", user: publicUser(user) };
   },
 
   async login(body) {
-    const email = cleanEmail(body.email);
+    const login = String(body.username || body.email || "").trim();
     const password = String(body.password || "");
-    guardLogin(email);
-    let account = await verifyAccount(email, password);
+    guardLogin(login);
+    let account = await verifyAccount(login, password);
     if (!account) {
       if (hasLocalVault() && !isOpen()) {
         await openLocalVault();
         await refreshFromRemote();
       }
-      const user = isOpen() ? currentVault().users.find((row) => row.email === email) : null;
+      const user = isOpen() ? currentVault().users.find((row) => row.email === cleanEmail(login) || row.username === login.toLowerCase()) : null;
       const ok = user && user.passwordHash ? await verifyPassword(password, user.passwordHash, user.passwordSalt) : false;
-      noteLogin(email, ok);
+      noteLogin(login, ok);
       if (!ok) throw new Error("Those details do not match an account.");
-      if (body.totpCode && account?.totpSecret) {
-        if (!(await totpMatch(account.totpSecret, body.totpCode))) throw new Error("That authenticator code is not valid.");
-      }
       writeSession(user.id);
       logActivity(user, "login", `${user.name} signed in`);
       await persist();
-      return { ok: true, user: publicUser(user) };
+      return { ok: true, user: publicUser(user), needsTotp: user.role === "admin" };
     }
-    noteLogin(email, true);
-    if (account.totpConfirmed) {
-      if (!body.totpCode) return { ok: false, needsTotp: true };
-      if (!(await totpMatch(account.totpSecret, body.totpCode))) throw new Error("That authenticator code is not valid.");
-    }
+    noteLogin(login, true);
     if (hasLocalVault() && !isOpen()) {
       await openLocalVault();
       await refreshFromRemote();
     }
-    const user = isOpen() ? currentVault().users.find((row) => row.email === email) : null;
+    const user = isOpen() ? currentVault().users.find((row) => row.email === account.email || row.username === account.username) : null;
     if (!user) throw new Error("This account is not in an open household yet. Create one or join with a code.");
+    if (user.role === "admin" && account.totpConfirmed) {
+      if (!body.totpCode) return { ok: false, needsTotp: true };
+      if (!(await totpMatch(account.totpSecret, body.totpCode))) throw new Error("That authenticator code is not valid.");
+    }
     writeSession(user.id, { accountId: account.id });
     logActivity(user, "login", `${user.name} signed in`);
     await persist();
-    return { ok: true, user: publicUser(user), needsTotp: !account.totpConfirmed, totpSecret: account.totpConfirmed ? "" : account.totpSecret };
+    return {
+      ok: true,
+      user: publicUser(user),
+      needsTotp: user.role === "admin" && !account.totpConfirmed,
+      totpSecret: user.role === "admin" && !account.totpConfirmed ? account.totpSecret : "",
+    };
   },
 
   async loginSocial(identity) {
-    if (!identity?.email) throw new Error("That social account did not share an email.");
+    if (!identity?.email) throw new Error("That Google account did not share an email.");
     let account = findAccountByProvider(identity.provider, identity.subject) || findAccountByEmail(identity.email);
     if (!account) {
-      account = await registerAccount({ name: identity.name || identity.email, email: identity.email, password: "", provider: identity });
+      account = await registerAccount({
+        name: identity.name || identity.email,
+        username: identity.email.split("@")[0],
+        email: identity.email,
+        password: "",
+        provider: identity,
+      });
     }
     if (hasLocalVault() && !isOpen()) {
       try {
@@ -318,12 +338,14 @@ export const api = {
     }
     const user = isOpen() ? currentVault().users.find((row) => row.email === account.email) : null;
     if (user) writeSession(user.id, { accountId: account.id });
+    const admin = user?.role === "admin";
     return {
       ok: true,
       linked: Boolean(user),
-      totpSecret: account.totpConfirmed ? "" : account.totpSecret,
-      needsTotp: !account.totpConfirmed,
+      totpSecret: admin && !account.totpConfirmed ? account.totpSecret : "",
+      needsTotp: Boolean(admin && !account.totpConfirmed),
       account: publicAccount(account),
+      user: user ? publicUser(user) : null,
     };
   },
 
@@ -378,8 +400,8 @@ export const api = {
     return {
       ok: true,
       user: publicUser(user),
-      needsTotp: Boolean(account?.totpConfirmed),
-      totpSecret: "",
+      needsTotp: user.role === "admin",
+      totpSecret: user.role === "admin" && account && !account.totpConfirmed ? account.totpSecret : "",
     };
   },
 

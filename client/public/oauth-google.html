@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google sign-in</title>
+  </head>
+  <body>
+    <p>Finishing Google sign-in…</p>
+    <script>
+      (function () {
+        var hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+        var search = new URLSearchParams(location.search);
+        var payload = {
+          type: "omh-google",
+          id_token: hash.get("id_token") || search.get("id_token") || "",
+          access_token: hash.get("access_token") || search.get("access_token") || "",
+          error: hash.get("error") || search.get("error") || ""
+        };
+        if (window.opener) {
+          window.opener.postMessage(payload, "*");
+          window.close();
+          return;
+        }
+        var base = location.pathname.replace(/oauth-google\.html$/, "");
+        location.replace(base + "#/signin");
+      })();
+    </script>
+  </body>
+</html>

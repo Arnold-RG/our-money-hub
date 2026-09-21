@@ -5,7 +5,8 @@ const BLOB_KEY = "omh.blob";
 const KEY_KEY = "omh.vk";
 const HOUSES_KEY = "omh.houses";
 const ACTIVE_KEY = "omh.activeHouse";
-const REMOTE = "https://jsonblob.com/api/jsonBlob";
+const JSONBLOB = "https://jsonblob.com/api/jsonBlob";
+const BYTEBIN = "https://bytebin.lucko.me";
 
 let memory = null;
 let vaultKey = null;
@@ -172,41 +173,105 @@ export async function persist(createRemote = false) {
   }
   try {
     await pushRemote(pack, createRemote);
-  } catch {
-    // Local books still save if the remote copy is unreachable.
+  } catch (err) {
+    if (createRemote) throw err;
   }
   snapshotHouse();
+  if (createRemote && !getSyncCode()) {
+    throw new Error("The household was saved on this device, but a join code could not be created. Try again.");
+  }
+}
+
+function setMeta(patch) {
+  localStorage.setItem(META_KEY, JSON.stringify({ ...getMeta(), ...patch }));
+}
+
+function remoteGetUrl(blobId, host) {
+  if (host === "bytebin" || (blobId && !String(blobId).includes("-"))) {
+    return `${BYTEBIN}/${blobId}`;
+  }
+  return `${JSONBLOB}/${blobId}`;
+}
+
+async function createJsonBlob(body) {
+  const res = await fetch(JSONBLOB, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body,
+  });
+  if (!res.ok) throw new Error("jsonblob");
+  const location = res.headers.get("Location") || "";
+  const blobId = location.split("/").pop();
+  if (!blobId) throw new Error("jsonblob");
+  return { host: "jsonblob", blobId };
+}
+
+async function createBytebin(body) {
+  const res = await fetch(`${BYTEBIN}/post`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body,
+  });
+  if (!res.ok) throw new Error("bytebin");
+  let blobId = res.headers.get("Location") || "";
+  try {
+    const data = await res.json();
+    blobId = data.key || blobId;
+  } catch {
+    /* header only */
+  }
+  blobId = String(blobId).split("/").pop();
+  if (!blobId) throw new Error("bytebin");
+  return { host: "bytebin", blobId };
 }
 
 async function pushRemote(pack, createRemote) {
   const meta = getMeta();
   const body = JSON.stringify({ v: 1, ...pack, revision: memory.revision });
-  if (!meta.blobId || createRemote) {
-    const res = await fetch(REMOTE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body,
-    });
-    if (!res.ok) throw new Error("Could not open household sync.");
-    const location = res.headers.get("Location") || "";
-    const blobId = location.split("/").pop();
-    if (!blobId) throw new Error("Could not open household sync.");
-    localStorage.setItem(META_KEY, JSON.stringify({ ...meta, blobId }));
+  if (!meta.blobId || createRemote || meta.host === "bytebin") {
+    let created = null;
+    const errors = [];
+    for (const maker of [createBytebin, createJsonBlob]) {
+      try {
+        created = await maker(body);
+        break;
+      } catch (err) {
+        errors.push(err.message);
+      }
+    }
+    if (!created) throw new Error("Could not create a household join code. Try again on a network.");
+    setMeta({ blobId: created.blobId, host: created.host });
     return;
   }
-  const res = await fetch(`${REMOTE}/${meta.blobId}`, {
+  const res = await fetch(`${JSONBLOB}/${meta.blobId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body,
   });
-  if (!res.ok) throw new Error("Could not update household sync.");
+  if (!res.ok) {
+    const created = await createBytebin(body);
+    setMeta({ blobId: created.blobId, host: created.host });
+  }
+}
+
+async function fetchPack(blobId) {
+  const hosts = blobId.includes("-") ? ["jsonblob", "bytebin"] : ["bytebin", "jsonblob"];
+  for (const host of hosts) {
+    try {
+      const res = await fetch(remoteGetUrl(blobId, host), { headers: { Accept: "application/json" } });
+      if (!res.ok) continue;
+      const pack = await res.json();
+      if (pack?.iv && pack?.ct) return pack;
+    } catch {
+      /* try the other host */
+    }
+  }
+  return null;
 }
 
 export async function pullRemote(blobId, keyBytes) {
-  const res = await fetch(`${REMOTE}/${blobId}`, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error("Could not find that household. Check the join code.");
-  const pack = await res.json();
-  if (!pack?.iv || !pack?.ct) throw new Error("That household copy is damaged.");
+  const pack = await fetchPack(blobId);
+  if (!pack) throw new Error("Could not find that household. Check the join code or link.");
   return importVault(pack, keyBytes, blobId);
 }
 
@@ -214,10 +279,8 @@ export async function refreshFromRemote() {
   const meta = getMeta();
   if (!meta.blobId || !vaultKey) return memory;
   try {
-    const res = await fetch(`${REMOTE}/${meta.blobId}`, { headers: { Accept: "application/json" } });
-    if (!res.ok) return memory;
-    const pack = await res.json();
-    if (!pack?.iv || !pack?.ct) return memory;
+    const pack = await fetchPack(meta.blobId);
+    if (!pack) return memory;
     const remote = await decryptJson(pack, vaultKey);
     if ((remote.revision || 0) > (memory?.revision || 0)) {
       memory = remote;

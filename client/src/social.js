@@ -33,35 +33,101 @@ function decodeJwt(token) {
   return JSON.parse(atob(padded));
 }
 
+function googleRedirectUri() {
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  return `${location.origin}${base}/oauth-google.html`;
+}
+
 export async function signInWithGoogle() {
   const clientId = oauthConfig().google;
-  if (!clientId) {
-    throw new Error("GOOGLE_SETUP");
-  }
+  if (!clientId) throw new Error("GOOGLE_SETUP");
   await loadScript("https://accounts.google.com/gsi/client");
+  if (window.google?.accounts?.oauth2?.initTokenClient) {
+    return googleTokenPopup(clientId);
+  }
+  return googleRedirectPopup(clientId);
+}
+
+function googleTokenPopup(clientId) {
   return new Promise((resolve, reject) => {
-    try {
-      window.google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (response) => {
-          const payload = decodeJwt(response.credential);
-          resolve({
-            provider: "google",
-            subject: payload.sub,
-            email: String(payload.email || "").toLowerCase(),
-            name: payload.name || payload.email,
-          });
-        },
-      });
-      window.google.accounts.id.prompt((notice) => {
-        if (notice && notice.isNotDisplayed && notice.isNotDisplayed()) {
-          reject(new Error("Google sign-in was blocked by the browser. Use email and password, or allow pop-ups."));
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: "openid email profile",
+      prompt: "select_account",
+      callback: async (resp) => {
+        if (resp.error) {
+          reject(new Error(resp.error_description || "Google sign-in was cancelled."));
+          return;
         }
-      });
-    } catch (err) {
-      reject(err);
-    }
+        try {
+          resolve(await googleProfile(resp.access_token));
+        } catch (err) {
+          reject(err);
+        }
+      },
+    });
+    client.requestAccessToken();
   });
+}
+
+function googleRedirectPopup(clientId) {
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(googleRedirectUri())}&response_type=token id_token&scope=${encodeURIComponent("openid email profile")}&prompt=select_account&nonce=${encodeURIComponent(nonce)}`;
+  const popup = window.open(url, "omh-google", "width=480,height=640");
+  return new Promise((resolve, reject) => {
+    if (!popup) {
+      reject(new Error("Allow pop-ups to continue with Google."));
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(timer);
+        reject(new Error("Google sign-in was closed."));
+      }
+    }, 400);
+    function onMessage(event) {
+      if (event.data?.type !== "omh-google") return;
+      window.removeEventListener("message", onMessage);
+      window.clearInterval(timer);
+      popup.close();
+      if (event.data.error) {
+        reject(new Error(event.data.error));
+        return;
+      }
+      if (event.data.access_token) {
+        googleProfile(event.data.access_token).then(resolve).catch(reject);
+        return;
+      }
+      if (event.data.id_token) {
+        const payload = decodeJwt(event.data.id_token);
+        resolve({
+          provider: "google",
+          subject: payload.sub,
+          email: String(payload.email || "").toLowerCase(),
+          name: payload.name || payload.email,
+        });
+        return;
+      }
+      reject(new Error("Google did not share an email."));
+    }
+    window.addEventListener("message", onMessage);
+  });
+}
+
+async function googleProfile(accessToken) {
+  const me = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  }).then((res) => {
+    if (!res.ok) throw new Error("Google did not share an email.");
+    return res.json();
+  });
+  if (!me.email) throw new Error("Google did not share an email.");
+  return {
+    provider: "google",
+    subject: me.sub,
+    email: String(me.email).toLowerCase(),
+    name: me.name || me.email,
+  };
 }
 
 export async function signInWithFacebook() {
