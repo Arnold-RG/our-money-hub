@@ -2,16 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { money, monthLabel, prettyTime } from "../format.js";
-import { Field, Modal, Money, Notice } from "../ui.jsx";
+import { Field, Money, Notice } from "../ui.jsx";
 
 export function People({ session, onRefresh }) {
   const [members, setMembers] = useState([]);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [picked, setPicked] = useState(session.user.id);
+  const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
-  const [reset, setReset] = useState(null);
   const [busy, setBusy] = useState(false);
   const thread = useRef(null);
   const admin = session.user.role === "admin";
@@ -132,7 +132,7 @@ export function People({ session, onRefresh }) {
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <div>
                   <h3>{person.name}</h3>
-                  <p className="lede">{person.username ? `@${person.username} · ` : ""}{person.email}</p>
+                  <p className="lede">{person.role === "admin" ? "Admin of this household" : "Member · full household"}</p>
                 </div>
                 <span className="tag copper">{person.role === "spouse" ? "member" : person.role}</span>
               </div>
@@ -174,8 +174,26 @@ export function People({ session, onRefresh }) {
                 <Link className="btn-ghost" to="/savings">Savings</Link>
               </div>
               {admin && (
-                <div className="row" style={{ marginTop: 10 }}>
-                  <button className="btn-ghost" type="button" onClick={() => setReset({ id: person.id, name: person.name, password: "" })}>Reset password</button>
+                <form className="row" style={{ marginTop: 10, flexWrap: "wrap" }} onSubmit={async (event) => {
+                  event.preventDefault();
+                  setBusy(true); setError("");
+                  try {
+                    const name = newName.trim();
+                    await api.addPerson({ name });
+                    setNewName("");
+                    setOk(`${name} is in the household.`);
+                    await loadPeople();
+                    onRefresh?.();
+                  } catch (err) {
+                    setError(err.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}>
+                  <Field label="Add a member by name">
+                    <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Their name" />
+                  </Field>
+                  <button className="btn" disabled={busy || !newName.trim()}>Add</button>
                   {person.id !== session.user.id && (
                     <button className="btn-ghost" type="button" onClick={async () => {
                       if (!window.confirm(`Remove ${person.name} from this household?`)) return;
@@ -184,29 +202,12 @@ export function People({ session, onRefresh }) {
                       onRefresh?.();
                     }}>Remove</button>
                   )}
-                </div>
+                </form>
               )}
             </div>
           )}
         </article>
       </section>
-
-      {reset && (
-        <Modal title={`Reset password · ${reset.name}`} onClose={() => setReset(null)} footer={<><button className="btn-ghost" onClick={() => setReset(null)}>Cancel</button><button className="btn" disabled={busy} onClick={async () => {
-          setBusy(true);
-          try {
-            await api.resetPassword(reset.id, reset.password);
-            setReset(null);
-            setOk("Password updated.");
-          } catch (err) {
-            setError(err.message);
-          } finally {
-            setBusy(false);
-          }
-        }}>Save password</button></>}>
-          <Field label="New password"><input type="password" autoComplete="new-password" value={reset.password} onChange={(e) => setReset({ ...reset, password: e.target.value })} /></Field>
-        </Modal>
-      )}
     </>
   );
 }

@@ -1,8 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api.js";
-import { biometricLinked, platformUnlockReady, registerBiometric } from "../biometrics.js";
 import { copyText, joinUrl, shareInvite } from "../share.js";
-import { oauthConfig, saveOauthConfig } from "../social.js";
 import { Field, Notice } from "../ui.jsx";
 
 export function Settings({ session, theme, setTheme, onRefresh }) {
@@ -10,36 +8,55 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
     name: session.household?.name || "",
     currency: session.household?.currency || "PLN",
   });
-  const [pass, setPass] = useState({ currentPassword: "", nextPassword: "" });
+  const [who, setWho] = useState(session.user.id);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const [busy, setBusy] = useState(false);
-  const [bioReady, setBioReady] = useState(false);
-  const [bioOn, setBioOn] = useState(() => biometricLinked(session.user.id));
-  const [google, setGoogle] = useState(() => oauthConfig().google || "");
   const admin = session.user.role === "admin";
   const syncCode = admin ? (session.syncCode || api.syncCode()) : "";
   const url = session.joinUrl || (syncCode ? joinUrl(syncCode) : "");
-
-  useEffect(() => {
-    platformUnlockReady().then(setBioReady);
-  }, []);
+  const people = (session.members || []).filter((row) => row.role !== "guest");
+  const houses = session.houses || [];
 
   return (
     <>
       <header className="page-head">
         <div>
-          <p className="kicker">House and security</p>
+          <p className="kicker">House</p>
           <h2>Settings</h2>
           <p className="lede">
             {admin
-              ? "You manage the house, the invite, and device security. Members add and see the same books, and everyone can chat."
+              ? "You manage the house name and the invite. Everyone in the house can add and see the same books, and chat together."
               : "You can add and view every household line and join the household chat. Only an admin can change the house name or send invites."}
           </p>
         </div>
       </header>
       <Notice error={error} ok={ok} />
       <section className="card-grid">
+        <article className="card">
+          <h3>Who you are</h3>
+          <p className="lede">This device does not ask for a password. Pick the name you use in this household.</p>
+          <div className="form-grid" style={{ marginTop: 12 }}>
+            <Field label="Using this house as" wide>
+              <select value={who} onChange={(e) => setWho(e.target.value)}>
+                {people.map((row) => <option key={row.id} value={row.id}>{row.name}{row.role === "admin" ? " · admin" : ""}</option>)}
+              </select>
+            </Field>
+          </div>
+          <button className="btn" style={{ marginTop: 14 }} disabled={busy} type="button" onClick={async () => {
+            setBusy(true); setError("");
+            try {
+              await api.become(who);
+              setOk("This device now uses that name.");
+              onRefresh?.();
+            } catch (err) {
+              setError(err.message);
+            } finally {
+              setBusy(false);
+            }
+          }}>Use this name</button>
+        </article>
+
         {admin && (
           <form className="card" onSubmit={async (event) => {
             event.preventDefault();
@@ -72,7 +89,7 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
         {admin && (
           <article className="card">
             <h3>Invite members</h3>
-            <p className="lede">Only the admin can send this. Members create their own username, email, and password, then they see and add to the same books.</p>
+            <p className="lede">Only the admin can send this. People open the link or paste the code and add their name.</p>
             <p className="hint">{url}</p>
             <textarea readOnly value={syncCode} rows={4} />
             <div className="row" style={{ marginTop: 10 }}>
@@ -90,61 +107,26 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
           </article>
         )}
 
-        <article className="card">
-          <h3>Security stack</h3>
-          <ol className="security-steps">
-            <li><strong>Password</strong> — username or email, 10+ letters and numbers. The browser can store it.</li>
-            <li><strong>Biometric</strong> — Face, fingerprint, or Windows Hello on this device, for every person.</li>
-            <li><strong>Session</strong> — closes after 20 idle minutes, or after 8 hours. Five failed sign-ins lock the login for 15 minutes.</li>
-            <li><strong>Vault</strong> — household books and chat are encrypted on this device before they sync.</li>
-          </ol>
-          <form onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true); setError("");
-            try {
-              await api.password(pass);
-              setPass({ currentPassword: "", nextPassword: "" });
-              setOk("Your password was changed.");
-            } catch (err) {
-              setError(err.message);
-            } finally {
-              setBusy(false);
-            }
-          }}>
-            <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="Current password" wide>
-                <input type="password" name="current-password" autoComplete="current-password" value={pass.currentPassword} onChange={(e) => setPass({ ...pass, currentPassword: e.target.value })} />
-              </Field>
-              <Field label="New password" wide>
-                <input type="password" name="new-password" autoComplete="new-password" value={pass.nextPassword} onChange={(e) => setPass({ ...pass, nextPassword: e.target.value })} />
-              </Field>
+        {houses.length > 1 && (
+          <article className="card">
+            <h3>Other households on this device</h3>
+            <div className="home-actions" style={{ marginTop: 12 }}>
+              {houses.filter((row) => row.id !== session.household?.id).map((row) => (
+                <button key={row.id} className="btn-ghost" type="button" disabled={busy} onClick={async () => {
+                  setBusy(true); setError("");
+                  try {
+                    await api.switchHouse(row.id);
+                    onRefresh?.();
+                  } catch (err) {
+                    setError(err.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}>Open {row.name}</button>
+              ))}
             </div>
-            <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Update password</button>
-          </form>
-          <div style={{ marginTop: 16 }}>
-            {bioReady ? (
-              bioOn
-                ? <p className="hint">Face or fingerprint is linked on this device.</p>
-                : (
-                  <button className="btn" type="button" disabled={busy} onClick={async () => {
-                    setBusy(true); setError("");
-                    try {
-                      await registerBiometric(session.user);
-                      await api.markBiometric();
-                      setBioOn(true);
-                      setOk("Biometric unlock is on for this device.");
-                    } catch (err) {
-                      setError(err.message);
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}>Add Face or fingerprint</button>
-                )
-            ) : (
-              <p className="hint">This browser has no platform unlock. Use a phone with Face ID or a computer with Windows Hello.</p>
-            )}
-          </div>
-        </article>
+          </article>
+        )}
 
         <article className="card">
           <h3>Display</h3>
@@ -153,21 +135,6 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
             <button className={theme === "dark" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("dark")}>Dark</button>
           </div>
         </article>
-
-        {admin && (
-          <form className="card" onSubmit={(event) => {
-            event.preventDefault();
-            saveOauthConfig({ google: google.trim() });
-            setOk("Google sign-in ID saved on this device.");
-          }}>
-            <h3>Google sign-in</h3>
-            <p className="lede">Optional. A Google Cloud web client ID turns on Continue with Google for this household.</p>
-            <Field label="Google client ID" wide>
-              <input value={google} onChange={(e) => setGoogle(e.target.value)} placeholder="….apps.googleusercontent.com" />
-            </Field>
-            <button className="btn" style={{ marginTop: 14 }}>Save Google ID</button>
-          </form>
-        )}
       </section>
     </>
   );

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api.js";
 import { currentMonth } from "./format.js";
-import { clearSession, touchSession } from "./security.js";
 import { Icon, OmhMark } from "./ui.jsx";
 import { Welcome } from "./pages/Welcome.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
@@ -56,22 +55,7 @@ export default function App() {
     setMore(false);
   }, [location.pathname]);
 
-  useEffect(() => {
-    function ping() {
-      if (!touchSession()) {
-        clearSession();
-        refresh();
-      }
-    }
-    const id = setInterval(ping, 30000);
-    window.addEventListener("pointerdown", ping);
-    window.addEventListener("keydown", ping);
-    return () => {
-      clearInterval(id);
-      window.removeEventListener("pointerdown", ping);
-      window.removeEventListener("keydown", ping);
-    };
-  }, []);
+  const joining = location.pathname.startsWith("/join") || location.pathname.startsWith("/create");
 
   const links = useMemo(() => {
     if (!boot?.user) return [];
@@ -88,12 +72,11 @@ export default function App() {
   if (boot.error) {
     return <div className="auth-wrap"><p>{boot.error}</p></div>;
   }
-  if (!boot.user || boot.needsBio) {
+  if (!boot.user || joining) {
     return (
       <Routes>
         <Route path="/join/*" element={<Welcome boot={boot} onDone={refresh} />} />
         <Route path="/create" element={<Welcome boot={boot} onDone={refresh} />} />
-        <Route path="/signin" element={<Welcome boot={boot} onDone={refresh} />} />
         <Route path="*" element={<Welcome boot={boot} onDone={refresh} />} />
       </Routes>
     );
@@ -126,7 +109,6 @@ export default function App() {
             <strong>{session.user.name}</strong>
             <span>{roleLine(session.user.role)}</span>
           </div>
-          <button className="btn-ghost" onClick={async () => { await api.logout(); refresh(); }}>Sign out</button>
         </div>
       </aside>
 
@@ -164,7 +146,6 @@ export default function App() {
           {mobileMore.map((item) => (
             <NavLink key={item.to} to={item.to}>{item.label}</NavLink>
           ))}
-          <button className="btn-ghost" onClick={async () => { await api.logout(); refresh(); }}>Sign out</button>
         </div>
       )}
     </div>

@@ -7,23 +7,15 @@ import {
   RECURRING,
 } from "./catalogs.js";
 import {
-  assertPassword,
-  cleanEmail,
   cleanText,
   clearSession,
-  cleanUsername,
   decodeSyncCode,
-  guardLogin,
-  hashPassword,
   monthBounds,
-  noteLogin,
   nowIso,
   parseCents,
   parseDate,
   randomId,
   readSession,
-  touchSession,
-  verifyPassword,
   writeSession,
 } from "./security.js";
 import {
@@ -41,7 +33,6 @@ import {
   pullRemote,
   refreshFromRemote,
 } from "./vault.js";
-import { findAccountByEmail, findAccountById, findAccountByLogin, findAccountByProvider, patchAccount, publicAccount, registerAccount, verifyAccount } from "./identity.js";
 import { joinUrl } from "./share.js";
 
 const LEDGERS = {
@@ -75,16 +66,16 @@ function emptyGrants() {
 }
 
 function publicUser(user) {
-  return { id: user.id, householdId: "home", name: user.name, username: user.username || "", email: user.email, role: user.role };
+  return { id: user.id, householdId: "home", name: user.name, role: user.role };
 }
 
 function requireUser() {
-  const session = touchSession();
-  if (!session) throw new Error("Please sign in.");
+  const session = readSession();
+  if (!session) throw new Error("Open a household first.");
   const user = currentVault().users.find((row) => row.id === session.userId);
   if (!user) {
     clearSession();
-    throw new Error("Please sign in.");
+    throw new Error("Open a household first.");
   }
   return user;
 }
@@ -174,8 +165,6 @@ function membersOf() {
     .map((row) => ({
       id: row.id,
       name: row.name,
-      username: row.username || "",
-      email: row.email,
       role: row.role,
       created_at: row.createdAt,
       grants: grantsFor(row),
@@ -199,8 +188,6 @@ export const api = {
         return { user: null, currencies, houses, joinable: true };
       }
     }
-    const session = readSession();
-    if (!session) return { user: null, currencies, houses, joinable: true };
     if (!isOpen() && hasLocalVault()) {
       try {
         await openLocalVault();
@@ -208,51 +195,34 @@ export const api = {
         return { user: null, currencies, houses, joinable: true };
       }
     }
-    const user = isOpen() ? currentVault().users.find((row) => row.id === session.userId) : null;
+    if (!isOpen()) return { user: null, currencies, houses, joinable: true };
+    const saved = readSession();
+    const user = currentVault().users.find((row) => row.id === saved?.userId) || currentVault().users[0] || null;
     if (!user) return { user: null, currencies, houses, joinable: true };
-    const account = findAccountById(session.accountId) || findAccountByEmail(user.email);
+    writeSession(user.id);
     const grants = grantsFor(user);
     const code = grants.invite ? getSyncCode() : "";
     return {
-      user: { ...publicUser(user), account: publicAccount(account) },
+      user: publicUser(user),
       grants,
       household: currentVault().household,
-      members: grants.household ? membersOf() : [{ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, grants }],
+      members: grants.household ? membersOf() : [{ id: user.id, name: user.name, role: user.role, grants }],
       catalogs: catalogs(),
       syncCode: code,
       joinUrl: code ? joinUrl(code) : "",
       houses,
-      needsBio: Boolean(account && !account.biometricOn),
     };
   },
 
   async setup(body) {
     const name = cleanText(body.adminName || body.name, 80);
-    const username = body.username ? cleanUsername(body.username) : "";
-    const email = cleanEmail(body.adminEmail || body.email);
-    const password = String(body.adminPassword || body.password || "");
     const householdName = cleanText(body.householdName, 80) || "Our household";
     const currency = CURRENCY_CODES.includes(body.currency) ? body.currency : "PLN";
-    const provider = body.provider || null;
-    if (!name || !email) throw new Error("Add your name and email.");
-    if (!username) throw new Error("Choose a username.");
-    let account = findAccountByEmail(email) || findAccountByLogin(username);
-    if (!provider) {
-      if (!account) assertPassword(password);
-      else if (!(await verifyAccount(email, password)) && !(await verifyAccount(username, password))) {
-        throw new Error("Password does not match this account.");
-      }
-    }
-    if (!account) account = await registerAccount({ name, username, email, password, provider });
-    const hashed = account.passwordHash ? { hash: account.passwordHash, salt: account.passwordSalt } : await hashPassword(password || randomId());
+    if (!name) throw new Error("Add your name.");
     const vault = emptyVault();
     const admin = {
       id: randomId(),
       name,
-      username: account.username || username,
-      email,
-      passwordHash: hashed.hash,
-      passwordSalt: hashed.salt,
       role: "admin",
       createdAt: nowIso(),
     };
@@ -267,7 +237,7 @@ export const api = {
       created_at: nowIso(),
     });
     await createVault(vault);
-    writeSession(admin.id, { accountId: account.id });
+    writeSession(admin.id);
     const code = getSyncCode();
     if (!code) throw new Error("The household was created, but a join code could not be generated. Try again.");
     return { ok: true, syncCode: code, joinUrl: joinUrl(code), user: publicUser(admin) };
@@ -277,25 +247,12 @@ export const api = {
     const { blobId, keyBytes } = decodeSyncCode(body.syncCode);
     await pullRemote(blobId, keyBytes);
     const name = cleanText(body.name, 80);
-    const username = cleanUsername(body.username);
-    const email = cleanEmail(body.email);
-    const password = String(body.password || "");
-    if (!name || !email) throw new Error("Add your name, username, and email to join.");
-    assertPassword(password);
-    let account = findAccountByEmail(email);
-    if (!account) account = await registerAccount({ name, username, email, password });
-    let user = currentVault().users.find((row) => row.email === email);
+    if (!name) throw new Error("Add your name to join.");
+    let user = currentVault().users.find((row) => String(row.name).toLowerCase() === name.toLowerCase());
     if (!user) {
-      const hashed = account.passwordHash
-        ? { hash: account.passwordHash, salt: account.passwordSalt }
-        : await hashPassword(password);
       user = {
         id: randomId(),
         name,
-        username: account.username || username,
-        email,
-        passwordHash: hashed.hash,
-        passwordSalt: hashed.salt,
         role: "member",
         createdAt: nowIso(),
       };
@@ -303,118 +260,31 @@ export const api = {
       logActivity(user, "people", `${name} joined the household`);
       await persist();
     }
-    writeSession(user.id, { accountId: account.id });
+    writeSession(user.id);
     return { ok: true, user: publicUser(user) };
-  },
-
-  async login(body) {
-    const login = String(body.username || body.email || "").trim();
-    const password = String(body.password || "");
-    guardLogin(login);
-    let account = await verifyAccount(login, password);
-    if (!account) {
-      if (hasLocalVault() && !isOpen()) {
-        await openLocalVault();
-        await refreshFromRemote();
-      }
-      const user = isOpen() ? currentVault().users.find((row) => row.email === cleanEmail(login) || row.username === login.toLowerCase()) : null;
-      const ok = user && user.passwordHash ? await verifyPassword(password, user.passwordHash, user.passwordSalt) : false;
-      noteLogin(login, ok);
-      if (!ok) throw new Error("Those details do not match an account.");
-      writeSession(user.id);
-      logActivity(user, "login", `${user.name} signed in`);
-      await persist();
-      return { ok: true, user: publicUser(user) };
-    }
-    noteLogin(login, true);
-    if (hasLocalVault() && !isOpen()) {
-      await openLocalVault();
-      await refreshFromRemote();
-    }
-    const user = isOpen() ? currentVault().users.find((row) => row.email === account.email || row.username === account.username) : null;
-    if (!user) throw new Error("This account is not in an open household yet. Create one or join with a code.");
-    writeSession(user.id, { accountId: account.id });
-    logActivity(user, "login", `${user.name} signed in`);
-    await persist();
-    return { ok: true, user: publicUser(user) };
-  },
-
-  async loginSocial(identity) {
-    if (!identity?.email) throw new Error("That Google account did not share an email.");
-    let account = findAccountByProvider(identity.provider, identity.subject) || findAccountByEmail(identity.email);
-    if (!account) {
-      account = await registerAccount({
-        name: identity.name || identity.email,
-        username: identity.email.split("@")[0],
-        email: identity.email,
-        password: "",
-        provider: identity,
-      });
-    }
-    if (hasLocalVault() && !isOpen()) {
-      try {
-        await openLocalVault();
-      } catch {
-        /* continue */
-      }
-    }
-    const user = isOpen() ? currentVault().users.find((row) => row.email === account.email) : null;
-    if (user) writeSession(user.id, { accountId: account.id });
-    return {
-      ok: true,
-      linked: Boolean(user),
-      account: publicAccount(account),
-      user: user ? publicUser(user) : null,
-    };
   },
 
   async switchHouse(id) {
-    const session = readSession();
-    const previous = isOpen() && session ? currentVault().users.find((row) => row.id === session.userId) : null;
     await activateHouse(id);
-    const next = previous ? currentVault().users.find((row) => row.email === previous.email) : null;
-    if (next) writeSession(next.id, { accountId: session?.accountId });
+    const user = currentVault().users[0];
+    if (user) writeSession(user.id);
     else clearSession();
-    return { ok: true };
+    return { ok: true, user: user ? publicUser(user) : null };
   },
 
-  async markBiometric() {
-    const session = readSession();
-    if (!session?.accountId) throw new Error("Please sign in first.");
-    patchAccount(session.accountId, { biometricOn: true });
-    return { ok: true };
-  },
-
-  async loginByUserId(userId) {
-    if (!hasLocalVault()) throw new Error("No household is open on this device.");
+  async become(id) {
     if (!isOpen()) {
+      if (!hasLocalVault()) throw new Error("Open a household first.");
       await openLocalVault();
-      await refreshFromRemote();
     }
-    const user = currentVault().users.find((row) => row.id === userId);
-    if (!user) throw new Error("That biometric key is not linked to a household account.");
-    const account = findAccountByEmail(user.email);
-    writeSession(user.id, { accountId: account?.id });
-    logActivity(user, "login", `${user.name} signed in with biometric unlock`);
-    await persist();
-    return { ok: true, user: publicUser(user) };
+    const person = currentVault().users.find((row) => row.id === id);
+    if (!person) throw new Error("Person not found.");
+    writeSession(person.id);
+    return { ok: true, user: publicUser(person) };
   },
 
   async logout() {
     clearSession();
-    return { ok: true };
-  },
-
-  async password(body) {
-    const user = requireUser();
-    if (!(await verifyPassword(body.currentPassword, user.passwordHash, user.passwordSalt))) {
-      throw new Error("Current password is not correct.");
-    }
-    assertPassword(body.nextPassword);
-    const next = await hashPassword(body.nextPassword);
-    user.passwordHash = next.hash;
-    user.passwordSalt = next.salt;
-    await persist();
     return { ok: true };
   },
 
@@ -460,35 +330,18 @@ export const api = {
   async addPerson(body) {
     const { user, vault } = requireAdmin();
     const name = cleanText(body.name, 80);
-    const email = cleanEmail(body.email);
-    const role = body.role === "admin" ? "admin" : body.role === "guest" ? "guest" : "member";
-    if (!name || !email) throw new Error("Name and email are required.");
-    assertPassword(body.password);
-    if (vault.users.some((row) => row.email === email)) throw new Error("That email is already in use.");
-    const hashed = await hashPassword(body.password);
+    if (!name) throw new Error("Add their name.");
+    if (vault.users.some((row) => String(row.name).toLowerCase() === name.toLowerCase())) {
+      throw new Error("That person is already in this household.");
+    }
     const next = {
       id: randomId(),
       name,
-      email,
-      passwordHash: hashed.hash,
-      passwordSalt: hashed.salt,
-      role,
+      role: "member",
       createdAt: nowIso(),
     };
     vault.users.push(next);
-    if (role === "guest") {
-      vault.grants[next.id] = {
-        income: Boolean(body.grants?.income),
-        expenses: Boolean(body.grants?.expenses),
-        savings: Boolean(body.grants?.savings),
-        projects: Boolean(body.grants?.projects),
-        costs: Boolean(body.grants?.costs),
-        exchange: Boolean(body.grants?.exchange),
-        plans: Boolean(body.grants?.plans),
-        advisor: Boolean(body.grants?.advisor),
-      };
-    }
-    logActivity(user, "people", `Added ${role} account for ${name}`);
+    logActivity(user, "people", `Added ${name} to the household`);
     await persist();
     return { ok: true, id: next.id };
   },
@@ -509,18 +362,6 @@ export const api = {
       advisor: Boolean(grants.advisor),
     };
     logActivity(user, "people", `Updated access for ${person.name}`);
-    await persist();
-    return { ok: true };
-  },
-
-  async resetPassword(id, password) {
-    const { vault } = requireAdmin();
-    const person = vault.users.find((row) => row.id === id);
-    if (!person) throw new Error("Person not found.");
-    assertPassword(password);
-    const hashed = await hashPassword(password);
-    person.passwordHash = hashed.hash;
-    person.passwordSalt = hashed.salt;
     await persist();
     return { ok: true };
   },
@@ -1032,7 +873,7 @@ export const api = {
     const vault = currentVault();
     return {
       household: vault.household,
-      members: vault.users.map((row) => ({ id: row.id, name: row.name, email: row.email, role: row.role })),
+      members: vault.users.map((row) => ({ id: row.id, name: row.name, role: row.role })),
       incomes: vault.incomes,
       expenses: vault.expenses,
       costs: vault.costs,

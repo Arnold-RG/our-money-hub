@@ -1,9 +1,6 @@
 const text = new TextEncoder();
 const decode = new TextDecoder();
-const LOCK_AFTER = 5;
-const LOCK_MS = 15 * 60 * 1000;
-const IDLE_MS = 20 * 60 * 1000;
-const SESSION_MS = 8 * 60 * 60 * 1000;
+const WHO_KEY = "omh.who";
 
 function toB64(bytes) {
   let bin = "";
@@ -16,43 +13,12 @@ function fromB64(value) {
   return Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
 }
 
-function toHex(bytes) {
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 export function randomBytes(n = 32) {
   return crypto.getRandomValues(new Uint8Array(n));
 }
 
 export function randomId() {
   return `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint8Array(4)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")}`;
-}
-
-export function assertPassword(password) {
-  const value = String(password || "");
-  if (value.length < 10) throw new Error("Password must be at least 10 characters.");
-  if (!/[A-Za-z]/.test(value) || !/[0-9]/.test(value)) {
-    throw new Error("Use both letters and numbers in the password.");
-  }
-}
-
-export async function hashPassword(password, saltB64) {
-  const salt = saltB64 ? fromB64(saltB64) : randomBytes(16);
-  const base = await crypto.subtle.importKey("raw", text.encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations: 210000 },
-    base,
-    256
-  );
-  return { hash: toHex(new Uint8Array(bits)), salt: toB64(salt) };
-}
-
-export async function verifyPassword(password, hash, salt) {
-  const next = await hashPassword(password, salt);
-  if (next.hash.length !== hash.length) return false;
-  let diff = 0;
-  for (let i = 0; i < next.hash.length; i += 1) diff |= next.hash.charCodeAt(i) ^ hash.charCodeAt(i);
-  return diff === 0;
 }
 
 export async function encryptJson(payload, keyBytes) {
@@ -83,87 +49,33 @@ export function decodeSyncCode(code) {
   return { blobId: parts[1], keyBytes: fromB64(b64) };
 }
 
-export function readLock(email) {
-  try {
-    const all = JSON.parse(localStorage.getItem("omh.lock") || "{}");
-    return all[String(email || "").toLowerCase()] || { fails: 0, until: 0 };
-  } catch {
-    return { fails: 0, until: 0 };
-  }
-}
-
-export function guardLogin(email) {
-  const row = readLock(email);
-  if (row.until && Date.now() < row.until) {
-    const mins = Math.ceil((row.until - Date.now()) / 60000);
-    throw new Error(`Too many failed sign-ins. Try again in ${mins} minute${mins === 1 ? "" : "s"}.`);
-  }
-}
-
-export function noteLogin(email, ok) {
-  const key = String(email || "").toLowerCase();
-  const all = JSON.parse(localStorage.getItem("omh.lock") || "{}");
-  if (ok) {
-    delete all[key];
-  } else {
-    const fails = (all[key]?.fails || 0) + 1;
-    all[key] = { fails, until: fails >= LOCK_AFTER ? Date.now() + LOCK_MS : 0 };
-  }
-  localStorage.setItem("omh.lock", JSON.stringify(all));
-}
-
-export function writeSession(userId, extra = {}) {
-  const now = Date.now();
-  sessionStorage.setItem("omh.sid", JSON.stringify({
-    userId,
-    accountId: extra.accountId || userId,
-    exp: now + SESSION_MS,
-    idle: now + IDLE_MS,
-  }));
+export function writeSession(userId) {
+  localStorage.setItem(WHO_KEY, JSON.stringify({ userId }));
 }
 
 export function readSession() {
   try {
-    const raw = sessionStorage.getItem("omh.sid");
+    const raw = localStorage.getItem(WHO_KEY) || sessionStorage.getItem("omh.sid");
     if (!raw) return null;
     const row = JSON.parse(raw);
-    const now = Date.now();
-    if (!row.userId || now > row.exp || now > row.idle) {
-      sessionStorage.removeItem("omh.sid");
-      return null;
-    }
-    return row;
+    if (!row.userId) return null;
+    return { userId: row.userId };
   } catch {
     return null;
   }
 }
 
 export function touchSession() {
-  const row = readSession();
-  if (!row) return null;
-  row.idle = Date.now() + IDLE_MS;
-  sessionStorage.setItem("omh.sid", JSON.stringify(row));
-  return row;
+  return readSession();
 }
 
 export function clearSession() {
+  localStorage.removeItem(WHO_KEY);
   sessionStorage.removeItem("omh.sid");
 }
 
 export function cleanText(value, max = 160) {
   return String(value || "").trim().slice(0, max);
-}
-
-export function cleanEmail(value) {
-  return String(value || "").trim().toLowerCase().slice(0, 160);
-}
-
-export function cleanUsername(value) {
-  const raw = String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
-  if (raw.length < 3 || raw.length > 32) {
-    throw new Error("Username must be 3 to 32 letters, numbers, dots, or dashes.");
-  }
-  return raw;
 }
 
 export function parseCents(amount) {
