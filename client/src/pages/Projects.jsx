@@ -48,7 +48,7 @@ export function Projects({ session }) {
       <header className="page-head">
         <div>
           <p className="kicker">The longer view</p>
-          <h2>Life projects</h2>
+          <h1>Life projects</h1>
           <p className="lede">A wedding, a house, school, a trip home — any member can open a project. Everyone sees the spend.</p>
         </div>
         <button className="btn" onClick={() => setEditing({ name: "", budget: "", status: "planned", targetDate: "", notes: "", ownerId: session.user.id })}>New project</button>

@@ -3,57 +3,71 @@ import {
   CURRENCY_CODES,
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  PLAN_LABELS,
   PROJECT_STATUSES,
   RECURRING,
 } from "./catalogs.js";
+import { emailProblem, normalizeEmail, passwordProblem } from "./authRules.js";
+import { today } from "./format.js";
+import { joinUrl } from "./share.js";
+import { siteUrl, supabase, isConfigured } from "./supabaseClient.js";
 import {
   cleanText,
-  clearSession,
-  decodeSyncCode,
   monthBounds,
   nowIso,
   parseCents,
   parseDate,
   randomId,
-  readSession,
-  writeSession,
 } from "./security.js";
-import {
-  activateHouse,
-  createVault,
-  currentVault,
-  emptyVault,
-  exportEncrypted,
-  getSyncCode,
-  hasLocalVault,
-  isOpen,
-  listHouses,
-  openLocalVault,
-  persist,
-  pullRemote,
-  refreshFromRemote,
-  wipeOldLoginStore,
-} from "./vault.js";
-import { joinUrl } from "./share.js";
+import { forgetDeviceCopy, hasLocalVault, openLocalVault, wipeOldLoginStore } from "./vault.js";
+
+const HOUSE_KEY = "omh.house";
 
 const LEDGERS = {
-  income: { list: "incomes", titleField: "source", dateField: "received_on", categories: INCOME_CATEGORIES, grant: "income", label: "income" },
-  expenses: { list: "expenses", titleField: "merchant", dateField: "spent_on", categories: EXPENSE_CATEGORIES, grant: "expenses", label: "expense" },
-  costs: { list: "costs", titleField: "title", dateField: "due_on", categories: COST_CATEGORIES, grant: "costs", label: "cost" },
+  income: { list: "incomes", table: "incomes", titleField: "source", dateField: "received_on", categories: INCOME_CATEGORIES, grant: "income", label: "income" },
+  expenses: { list: "expenses", table: "expenses", titleField: "merchant", dateField: "spent_on", categories: EXPENSE_CATEGORIES, grant: "expenses", label: "expense" },
+  costs: { list: "costs", table: "costs", titleField: "title", dateField: "due_on", categories: COST_CATEGORIES, grant: "costs", label: "cost" },
 };
+
+let memory = null;
+
+function explainError(error) {
+  if (!error) return;
+  const message = String(error.message || "Something went wrong.");
+  if (error.status === 429 || /rate limit/i.test(message)) {
+    throw new Error("Too many attempts. Wait a few minutes and try again.");
+  }
+  if (error.status === 401 || /jwt/i.test(message)) {
+    throw new Error("Your session ended. Sign in again.");
+  }
+  if (error.code === "23514") {
+    throw new Error("Check the category, date, and amount.");
+  }
+  throw new Error(message);
+}
+
+function dataOf(result) {
+  if (result.error) explainError(result.error);
+  return result.data;
+}
+
+function activeHouseId() {
+  return localStorage.getItem(HOUSE_KEY) || "";
+}
+
+function setActiveHouse(id) {
+  if (id) localStorage.setItem(HOUSE_KEY, id);
+  else localStorage.removeItem(HOUSE_KEY);
+}
 
 function grantsFor(user) {
   if (!user) return emptyGrants();
-  if (user.role === "admin" || user.role === "member" || user.role === "spouse") {
+  if (user.role === "admin" || user.role === "member") {
     const isAdmin = user.role === "admin";
     return {
       income: true, expenses: true, savings: true, projects: true, costs: true,
-      exchange: true, plans: true, advisor: true,
-      people: true,
-      settings: true,
-      invite: isAdmin,
-      manage: isAdmin,
-      household: true,
+      exchange: true, plans: true, advisor: true, people: true, settings: true,
+      invite: isAdmin, manage: isAdmin, household: true,
     };
   }
   return emptyGrants();
@@ -62,59 +76,178 @@ function grantsFor(user) {
 function emptyGrants() {
   return {
     income: false, expenses: false, savings: false, projects: false, costs: false,
-    exchange: false, plans: false, advisor: false, people: false, settings: false, invite: false, manage: false, household: false,
+    exchange: false, plans: false, advisor: false, people: false, settings: false,
+    invite: false, manage: false, household: false,
   };
 }
 
-function publicUser(user) {
-  return { id: user.id, householdId: "home", name: user.name, role: user.role };
+function catalogs() {
+  return {
+    income: INCOME_CATEGORIES,
+    expenses: EXPENSE_CATEGORIES,
+    costs: COST_CATEGORIES,
+    statuses: PROJECT_STATUSES,
+    recurring: RECURRING,
+    currencies: CURRENCY_CODES,
+  };
 }
 
-function requireUser() {
-  const session = readSession();
-  if (!session) throw new Error("Open a household first.");
-  const user = currentVault().users.find((row) => row.id === session.userId);
-  if (!user) {
-    clearSession();
-    throw new Error("Open a household first.");
-  }
-  return user;
+function requireConfigured() {
+  if (!isConfigured || !supabase) throw new Error("Sign-in is not connected for this copy.");
 }
 
-function requireGrant(module) {
-  const user = requireUser();
+async function requireSession() {
+  requireConfigured();
+  const { data, error } = await supabase.auth.getSession();
+  if (error) explainError(error);
+  if (!data.session) throw new Error("Sign in first.");
+  return data.session;
+}
+
+async function listHouses(userId) {
+  const memberships = dataOf(await supabase.from("members").select("household_id, role").eq("user_id", userId)) || [];
+  const ids = memberships.map((row) => row.household_id);
+  if (!ids.length) return [];
+  const houses = dataOf(await supabase.from("households").select("id, name, currency, created_at").in("id", ids)) || [];
+  const roles = new Map(memberships.map((row) => [row.household_id, row.role]));
+  return houses.map((house) => ({
+    id: house.id,
+    name: house.name,
+    currency: house.currency,
+    createdAt: house.created_at,
+    role: roles.get(house.id) || "member",
+  }));
+}
+
+async function fetchHouse(hid) {
+  const [house, members, incomes, expenses, costs, savings, savingsEntries, projects, projectEntries, messages, activity, lists, cards] = await Promise.all([
+    supabase.from("households").select("id, name, currency, created_at").eq("id", hid).maybeSingle(),
+    supabase.from("members").select("user_id, role, created_at").eq("household_id", hid),
+    supabase.from("incomes").select("*").eq("household_id", hid),
+    supabase.from("expenses").select("*").eq("household_id", hid),
+    supabase.from("costs").select("*").eq("household_id", hid),
+    supabase.from("savings").select("*").eq("household_id", hid),
+    supabase.from("savings_entries").select("*").eq("household_id", hid),
+    supabase.from("projects").select("*").eq("household_id", hid),
+    supabase.from("project_entries").select("*").eq("household_id", hid),
+    supabase.from("messages").select("*").eq("household_id", hid).order("created_at", { ascending: false }).limit(200),
+    supabase.from("activity").select("*").eq("household_id", hid).order("created_at", { ascending: false }).limit(80),
+    supabase.from("lists").select("*").eq("household_id", hid).order("position", { ascending: true }),
+    supabase.from("cards").select("*").eq("household_id", hid).order("position", { ascending: true }),
+  ]);
+  const household = dataOf(house);
+  if (!household) throw new Error("That household is not on this account.");
+  const memberRows = dataOf(members) || [];
+  const ids = memberRows.map((row) => row.user_id);
+  const profiles = ids.length
+    ? dataOf(await supabase.from("profiles").select("id, name").in("id", ids)) || []
+    : [];
+  const names = new Map(profiles.map((row) => [row.id, row.name]));
+  return {
+    household: {
+      id: household.id,
+      name: household.name,
+      currency: household.currency,
+      createdAt: household.created_at,
+    },
+    users: memberRows.map((row) => ({
+      id: row.user_id,
+      name: names.get(row.user_id) || "Member",
+      role: row.role,
+      createdAt: row.created_at,
+    })),
+    incomes: dataOf(incomes) || [],
+    expenses: dataOf(expenses) || [],
+    costs: dataOf(costs) || [],
+    savings: dataOf(savings) || [],
+    savingsEntries: dataOf(savingsEntries) || [],
+    projects: dataOf(projects) || [],
+    projectEntries: dataOf(projectEntries) || [],
+    messages: (dataOf(messages) || []).slice().reverse().map((row) => ({
+      id: row.id,
+      user_id: row.user_id,
+      name: row.name,
+      role: row.role,
+      text: row.body,
+      created_at: row.created_at,
+    })),
+    activity: dataOf(activity) || [],
+    lists: (dataOf(lists) || []).map((row) => ({ id: row.id, title: row.title, order: row.position })),
+    cards: (dataOf(cards) || []).map(cardFromRow),
+  };
+}
+
+function cardFromRow(row) {
+  return {
+    id: row.id,
+    listId: row.list_id,
+    title: row.title,
+    plan: row.plan || "",
+    labels: row.labels || [],
+    ownerId: row.owner_id,
+    owner_name: row.owner_name,
+    due: row.due_on,
+    order: row.position,
+    checklist: Array.isArray(row.checklist) ? row.checklist : [],
+    created_at: row.created_at,
+  };
+}
+
+async function reload() {
+  const hid = activeHouseId();
+  if (!hid) throw new Error("Open a household first.");
+  memory = await fetchHouse(hid);
+  return memory;
+}
+
+async function requireGrant(module) {
+  const session = await requireSession();
+  await reload();
+  const user = memory.users.find((row) => row.id === session.user.id);
+  if (!user) throw new Error("You are not in this household.");
   const grants = grantsFor(user);
-  if (!grants[module]) throw new Error("You do not have access to this part of Our Money Hub.");
-  return { user, grants, vault: currentVault() };
+  if (module && !grants[module]) throw new Error("You do not have access to this part of Our Money Hub.");
+  return { user, grants, session };
 }
 
-function requireAdmin() {
-  const user = requireUser();
-  if (user.role !== "admin") throw new Error("Only an admin can do that.");
-  return { user, grants: grantsFor(user), vault: currentVault() };
+async function requireAdmin() {
+  const result = await requireGrant("manage");
+  if (result.user.role !== "admin") throw new Error("Only an admin can do that.");
+  return result;
+}
+
+function membersOf() {
+  return memory.users
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      created_at: row.createdAt,
+      grants: grantsFor(row),
+    }))
+    .sort((a, b) => (a.role === "admin" ? 0 : 1) - (b.role === "admin" ? 0 : 1) || a.name.localeCompare(b.name));
 }
 
 function memberBooks(person) {
-  const vault = currentVault();
   const bounds = monthBounds();
   const id = String(person.id);
   const owned = (row) => String(row.owner_id) === id;
   const inRange = (row, field) => row[field] >= bounds.start && row[field] <= bounds.end;
-  const income_cents = vault.incomes.filter((row) => owned(row) && inRange(row, "received_on")).reduce((sum, row) => sum + row.amount_cents, 0);
-  const expense_cents = vault.expenses.filter((row) => owned(row) && inRange(row, "spent_on")).reduce((sum, row) => sum + row.amount_cents, 0);
-  const cost_cents = vault.costs.filter((row) => owned(row) && inRange(row, "due_on")).reduce((sum, row) => sum + row.amount_cents, 0);
-  const savings = vault.savings.filter(owned).map((row) => ({
+  const income_cents = memory.incomes.filter((row) => owned(row) && inRange(row, "received_on")).reduce((sum, row) => sum + row.amount_cents, 0);
+  const expense_cents = memory.expenses.filter((row) => owned(row) && inRange(row, "spent_on")).reduce((sum, row) => sum + row.amount_cents, 0);
+  const cost_cents = memory.costs.filter((row) => owned(row) && inRange(row, "due_on")).reduce((sum, row) => sum + row.amount_cents, 0);
+  const savings = memory.savings.filter(owned).map((row) => ({
     id: row.id,
     name: row.name,
     current_cents: row.current_cents,
     target_cents: row.target_cents,
   }));
-  const projects = vault.projects.filter(owned).map((row) => ({
+  const projects = memory.projects.filter(owned).map((row) => ({
     id: row.id,
     name: row.name,
     status: row.status,
-    budget_cents: row.budget_cents || row.target_cents || 0,
-    spent_cents: vault.projectEntries.filter((item) => item.project_id === row.id).reduce((sum, item) => sum + item.amount_cents, 0),
+    budget_cents: row.budget_cents || 0,
+    spent_cents: memory.projectEntries.filter((item) => item.project_id === row.id).reduce((sum, item) => sum + item.amount_cents, 0),
   }));
   return {
     ...person,
@@ -129,268 +262,276 @@ function memberBooks(person) {
   };
 }
 
-function chatList(vault) {
-  if (!Array.isArray(vault.messages)) vault.messages = [];
-  return vault.messages.slice(-200);
-}
-
-function logActivity(user, action, detail) {
-  currentVault().activity.unshift({
-    id: randomId(),
-    user_id: user.id,
-    actor_name: user.name,
-    action,
-    detail,
-    created_at: nowIso(),
-  });
-  currentVault().activity = currentVault().activity.slice(0, 80);
-}
-
 function ownerName(ownerId) {
-  return currentVault().users.find((row) => row.id === ownerId)?.name || "Household";
+  return memory.users.find((row) => row.id === ownerId)?.name || "Household";
 }
 
-function catalogs() {
+function lineOwner(row) {
+  return row.owner_name || ownerName(row.owner_id);
+}
+
+async function logActivity(action, detail) {
+  const { error } = await supabase.from("activity").insert({
+    household_id: memory.household.id,
+    action: cleanText(action, 40),
+    detail: cleanText(detail, 200),
+  });
+  if (error) return;
+}
+
+function cleanChecklist(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 30).map((item) => ({
+    id: cleanText(item?.id, 40) || randomId(),
+    text: cleanText(item?.text, 160),
+    done: Boolean(item?.done),
+  }));
+}
+
+function cleanLabels(labels) {
+  if (!Array.isArray(labels)) return [];
+  return labels.filter((label) => PLAN_LABELS.includes(label)).slice(0, 4);
+}
+
+function publicUser(user, email) {
   return {
-    income: INCOME_CATEGORIES,
-    expenses: EXPENSE_CATEGORIES,
-    costs: COST_CATEGORIES,
-    statuses: PROJECT_STATUSES,
-    recurring: RECURRING,
-    currencies: CURRENCY_CODES,
+    id: user.id,
+    householdId: memory?.household?.id || null,
+    name: user.name,
+    role: user.role,
+    email: email || "",
   };
-}
-
-function membersOf() {
-  return currentVault().users
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      role: row.role,
-      created_at: row.createdAt,
-      grants: grantsFor(row),
-    }))
-    .sort((a, b) => ["admin", "member", "spouse", "guest"].indexOf(a.role) - ["admin", "member", "spouse", "guest"].indexOf(b.role));
-}
-
-function assertOwner(ownerId) {
-  return currentVault().users.some((row) => row.id === ownerId);
 }
 
 export const api = {
   async bootstrap() {
     wipeOldLoginStore();
     const currencies = CURRENCY_CODES;
-    const houses = hasLocalVault() ? listHouses() : [];
-    if (hasLocalVault() && !isOpen()) {
-      try {
-        await openLocalVault();
-        await refreshFromRemote();
-      } catch {
-        return { user: null, currencies, houses, joinable: true };
-      }
+    if (!isConfigured) return { configured: false, user: null, currencies, houses: [] };
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw new Error(error.message);
+    const session = data.session;
+    if (!session) return { configured: true, user: null, currencies, houses: [] };
+    const profile = dataOf(await supabase.from("profiles").select("name").eq("id", session.user.id).maybeSingle());
+    const name = profile?.name || cleanText(session.user.user_metadata?.name, 80) || "Member";
+    const houses = await listHouses(session.user.id);
+    let hid = activeHouseId();
+    if (!houses.some((house) => house.id === hid)) hid = houses[0]?.id || "";
+    if (!hid) {
+      return {
+        configured: true,
+        user: { id: session.user.id, name, email: session.user.email || "", role: null, householdId: null },
+        grants: emptyGrants(),
+        household: null,
+        members: [],
+        catalogs: catalogs(),
+        houses,
+        syncCode: "",
+        joinUrl: "",
+      };
     }
-    if (!isOpen() && hasLocalVault()) {
-      try {
-        await openLocalVault();
-      } catch {
-        return { user: null, currencies, houses, joinable: true };
-      }
-    }
-    if (!isOpen()) return { user: null, currencies, houses, joinable: true };
-    const saved = readSession();
-    const user = currentVault().users.find((row) => row.id === saved?.userId) || currentVault().users[0] || null;
-    if (!user) return { user: null, currencies, houses, joinable: true };
-    writeSession(user.id);
-    const grants = grantsFor(user);
-    const code = grants.invite ? getSyncCode() : "";
+    setActiveHouse(hid);
+    await reload();
+    const member = memory.users.find((row) => row.id === session.user.id);
+    if (!member) throw new Error("You are not in this household.");
     return {
-      user: publicUser(user),
-      grants,
-      household: currentVault().household,
-      members: grants.household ? membersOf() : [{ id: user.id, name: user.name, role: user.role, grants }],
+      configured: true,
+      user: publicUser(member, session.user.email),
+      grants: grantsFor(member),
+      household: memory.household,
+      members: membersOf(),
       catalogs: catalogs(),
-      syncCode: code,
-      joinUrl: code ? joinUrl(code) : "",
       houses,
+      syncCode: "",
+      joinUrl: "",
     };
+  },
+
+  async signUp(body) {
+    requireConfigured();
+    const name = cleanText(body.name, 80);
+    const email = normalizeEmail(body.email);
+    const problem = emailProblem(email) || passwordProblem(body.password, email);
+    if (!name) throw new Error("Add your name.");
+    if (problem) throw new Error(problem);
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: body.password,
+      options: { data: { name }, emailRedirectTo: siteUrl() },
+    });
+    if (error) explainError(error);
+    return { needsEmail: !data.session, email };
+  },
+
+  async signIn(body) {
+    requireConfigured();
+    const email = normalizeEmail(body.email);
+    const problem = emailProblem(email);
+    if (problem) throw new Error(problem);
+    if (!body.password) throw new Error("Add your password.");
+    const { error } = await supabase.auth.signInWithPassword({ email, password: body.password });
+    if (error) explainError(error);
+    return { ok: true };
+  },
+
+  async sendReset(email) {
+    requireConfigured();
+    const normalized = normalizeEmail(email);
+    const problem = emailProblem(normalized);
+    if (problem) throw new Error(problem);
+    const { error } = await supabase.auth.resetPasswordForEmail(normalized, { redirectTo: siteUrl() });
+    if (error) explainError(error);
+    return { ok: true };
+  },
+
+  async updatePassword(body) {
+    const session = await requireSession();
+    const email = session.user.email || "";
+    const problem = passwordProblem(body.next, email);
+    if (problem) throw new Error(problem);
+    if (body.current) {
+      const { error } = await supabase.auth.signInWithPassword({ email, password: body.current });
+      if (error) explainError(error);
+    }
+    const { error } = await supabase.auth.updateUser({ password: body.next });
+    if (error) explainError(error);
+    return { ok: true };
+  },
+
+  async updateProfile(name) {
+    const session = await requireSession();
+    const cleanName = cleanText(name, 80);
+    if (!cleanName) throw new Error("Add your name.");
+    const { error } = await supabase.from("profiles").update({ name: cleanName }).eq("id", session.user.id);
+    if (error) explainError(error);
+    return { ok: true };
   },
 
   async setup(body) {
-    const name = cleanText(body.adminName || body.name, 80);
-    const householdName = cleanText(body.householdName, 80) || "Our household";
+    await requireSession();
+    const householdName = cleanText(body.householdName, 80);
     const currency = CURRENCY_CODES.includes(body.currency) ? body.currency : "PLN";
-    if (!name) throw new Error("Add your name.");
-    const vault = emptyVault();
-    const admin = {
-      id: randomId(),
-      name,
-      role: "admin",
-      createdAt: nowIso(),
-    };
-    vault.household = { id: randomId(), name: householdName, currency, createdAt: nowIso() };
-    vault.users.push(admin);
-    vault.activity.push({
-      id: randomId(),
-      user_id: admin.id,
-      actor_name: admin.name,
-      action: "setup",
-      detail: "Opened a household",
-      created_at: nowIso(),
-    });
-    await createVault(vault);
-    writeSession(admin.id);
-    const code = getSyncCode();
-    if (!code) throw new Error("The household was created, but a join code could not be generated. Try again.");
-    return { ok: true, syncCode: code, joinUrl: joinUrl(code), user: publicUser(admin) };
+    if (!householdName) throw new Error("Add a household name.");
+    const { data, error } = await supabase.rpc("create_household", { hname: householdName, hcurrency: currency });
+    if (error) explainError(error);
+    setActiveHouse(data.household_id);
+    await reload();
+    const code = data.invite_code;
+    return { ok: true, syncCode: code, joinUrl: joinUrl(code) };
   },
 
   async join(body) {
-    const { blobId, keyBytes } = decodeSyncCode(body.syncCode);
-    await pullRemote(blobId, keyBytes);
-    const name = cleanText(body.name, 80);
-    if (!name) throw new Error("Add your name to join.");
-    let user = currentVault().users.find((row) => String(row.name).toLowerCase() === name.toLowerCase());
-    if (!user) {
-      user = {
-        id: randomId(),
-        name,
-        role: "member",
-        createdAt: nowIso(),
-      };
-      currentVault().users.push(user);
-      logActivity(user, "people", `${name} joined the household`);
-      await persist();
-    }
-    writeSession(user.id);
-    return { ok: true, user: publicUser(user) };
+    await requireSession();
+    const code = cleanText(body.syncCode, 80);
+    if (code.length < 20) throw new Error("That code is not valid.");
+    const { data, error } = await supabase.rpc("join_household", { invite_code: code });
+    if (error) explainError(error);
+    setActiveHouse(data);
+    await reload();
+    return { ok: true };
+  },
+
+  async rotateInvite() {
+    await requireAdmin();
+    const { data, error } = await supabase.rpc("rotate_invite", { hid: memory.household.id });
+    if (error) explainError(error);
+    return { code: data, url: joinUrl(data) };
   },
 
   async switchHouse(id) {
-    await activateHouse(id);
-    const user = currentVault().users[0];
-    if (user) writeSession(user.id);
-    else clearSession();
-    return { ok: true, user: user ? publicUser(user) : null };
+    const session = await requireSession();
+    const houses = await listHouses(session.user.id);
+    if (!houses.some((house) => house.id === id)) throw new Error("That household is not on this account.");
+    setActiveHouse(id);
+    await reload();
+    return { ok: true };
   },
 
-  async become(id) {
-    if (!isOpen()) {
-      if (!hasLocalVault()) throw new Error("Open a household first.");
-      await openLocalVault();
-    }
-    const person = currentVault().users.find((row) => row.id === id);
-    if (!person) throw new Error("Person not found.");
-    writeSession(person.id);
-    return { ok: true, user: publicUser(person) };
+  async become() {
+    throw new Error("Each person signs in with their own account.");
   },
 
   async logout() {
-    clearSession();
+    setActiveHouse("");
+    memory = null;
+    if (supabase) await supabase.auth.signOut();
     return { ok: true };
   },
 
   async household(body) {
-    const { vault } = requireGrant("invite");
+    await requireAdmin();
     const name = cleanText(body.name, 80);
+    const currency = CURRENCY_CODES.includes(body.currency) ? body.currency : memory.household.currency;
     if (!name) throw new Error("Household name is required.");
-    vault.household.name = name;
-    vault.household.currency = CURRENCY_CODES.includes(body.currency) ? body.currency : vault.household.currency;
-    await persist();
+    const { error } = await supabase.from("households").update({ name, currency }).eq("id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async people() {
-    requireGrant("people");
+    await requireGrant("people");
     return { members: membersOf().map((row) => memberBooks(row)) };
   },
 
   async chat() {
-    requireGrant("people");
-    await refreshFromRemote();
-    return { messages: chatList(currentVault()) };
+    await requireGrant("people");
+    return { messages: memory.messages };
   },
 
   async sendChat(text) {
-    const { user, vault } = requireGrant("people");
+    const { user } = await requireGrant("people");
     const body = cleanText(text, 800);
     if (!body) throw new Error("Write a message first.");
-    if (!Array.isArray(vault.messages)) vault.messages = [];
-    vault.messages.push({
-      id: randomId(),
-      user_id: user.id,
-      name: user.name,
-      role: user.role === "spouse" ? "member" : user.role,
-      text: body,
-      created_at: nowIso(),
+    const { error } = await supabase.from("messages").insert({
+      household_id: memory.household.id,
+      body,
     });
-    vault.messages = vault.messages.slice(-200);
-    await persist();
-    return { ok: true, messages: chatList(vault) };
+    if (error) explainError(error);
+    await logActivity("people", `${user.name} wrote in the household chat`);
+    await reload();
+    return { ok: true, messages: memory.messages };
   },
 
-  async addPerson(body) {
-    const { user, vault } = requireAdmin();
-    const name = cleanText(body.name, 80);
-    if (!name) throw new Error("Add their name.");
-    if (vault.users.some((row) => String(row.name).toLowerCase() === name.toLowerCase())) {
-      throw new Error("That person is already in this household.");
-    }
-    const next = {
-      id: randomId(),
-      name,
-      role: "member",
-      createdAt: nowIso(),
-    };
-    vault.users.push(next);
-    logActivity(user, "people", `Added ${name} to the household`);
-    await persist();
-    return { ok: true, id: next.id };
+  async addPerson() {
+    throw new Error("People join with their own account and a code from Settings.");
   },
 
-  async updateGrants(id, grants) {
-    const { user, vault } = requireAdmin();
-    const person = vault.users.find((row) => row.id === id);
-    if (!person) throw new Error("Person not found.");
-    if (person.role !== "guest") throw new Error("Household members already have full access.");
-    vault.grants[id] = {
-      income: Boolean(grants.income),
-      expenses: Boolean(grants.expenses),
-      savings: Boolean(grants.savings),
-      projects: Boolean(grants.projects),
-      costs: Boolean(grants.costs),
-      exchange: Boolean(grants.exchange),
-      plans: Boolean(grants.plans),
-      advisor: Boolean(grants.advisor),
-    };
-    logActivity(user, "people", `Updated access for ${person.name}`);
-    await persist();
+  async updateGrants() {
+    throw new Error("Household members already have the books.");
+  },
+
+  async setRole(id, role) {
+    await requireAdmin();
+    const { error } = await supabase.rpc("set_member_role", {
+      hid: memory.household.id,
+      target: id,
+      next_role: role,
+    });
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async removePerson(id) {
-    const { user, vault } = requireAdmin();
-    const person = vault.users.find((row) => row.id === id);
-    if (!person) throw new Error("Person not found.");
-    if (person.id === user.id) throw new Error("You cannot remove yourself.");
-    if (person.role === "admin" && vault.users.filter((row) => row.role === "admin").length < 2) {
-      throw new Error("Keep at least one admin in this household.");
-    }
-    vault.users = vault.users.filter((row) => row.id !== id);
-    delete vault.grants[id];
-    logActivity(user, "people", `Removed ${person.name}`);
-    await persist();
+    const { user } = await requireAdmin();
+    const person = memory.users.find((row) => row.id === id);
+    const { error } = await supabase.rpc("remove_member", { hid: memory.household.id, target: id });
+    if (error) explainError(error);
+    await logActivity("people", `Removed ${person?.name || "a member"}`);
+    if (id === user.id) setActiveHouse("");
+    await reload().catch(() => { memory = null; });
     return { ok: true };
   },
 
   async ledger(kind, month) {
     const cfg = LEDGERS[kind];
-    const { vault } = requireGrant(cfg.grant);
+    await requireGrant(cfg.grant);
     const bounds = monthBounds(month);
-    const items = vault[cfg.list]
+    const items = memory[cfg.list]
       .filter((row) => row[cfg.dateField] >= bounds.start && row[cfg.dateField] <= bounds.end)
-      .sort((a, b) => b[cfg.dateField].localeCompare(a[cfg.dateField]))
-      .map((row) => ({ ...row, owner_name: ownerName(row.owner_id) }));
+      .sort((a, b) => String(b[cfg.dateField]).localeCompare(String(a[cfg.dateField])))
+      .map((row) => ({ ...row, owner_name: lineOwner(row) }));
     return {
       month: bounds.month,
       items,
@@ -401,7 +542,7 @@ export const api = {
 
   async addLedger(kind, body) {
     const cfg = LEDGERS[kind];
-    const { user, vault } = requireGrant(cfg.grant);
+    const { user } = await requireGrant(cfg.grant);
     const title = cleanText(body[cfg.titleField] || body.title, 120);
     const category = cleanText(body.category, 40);
     const amount = parseCents(body.amount);
@@ -411,144 +552,150 @@ export const api = {
     const ownerId = String(body.ownerId || user.id);
     if (!title || amount === null || !date) throw new Error("A title, amount, and date are required.");
     if (!cfg.categories.includes(category)) throw new Error("Choose a valid category.");
-    if (!assertOwner(ownerId)) throw new Error("That person is not in this household.");
-    vault[cfg.list].push({
-      id: randomId(),
+    if (!memory.users.some((row) => row.id === ownerId)) throw new Error("That person is not in this household.");
+    const { error } = await supabase.from(cfg.table).insert({
+      household_id: memory.household.id,
       owner_id: ownerId,
-      created_by: user.id,
       [cfg.titleField]: title,
       category,
       amount_cents: amount,
       [cfg.dateField]: date,
       recurring,
       notes,
-      created_at: nowIso(),
     });
-    logActivity(user, kind, `Added ${cfg.label}: ${title}`);
-    await persist();
+    if (error) explainError(error);
+    await logActivity(kind, `Added ${cfg.label}: ${title}`);
+    await reload();
     return { ok: true };
   },
 
   async updateLedger(kind, id, body) {
     const cfg = LEDGERS[kind];
-    const { vault } = requireGrant(cfg.grant);
-    const row = vault[cfg.list].find((item) => item.id === id);
-    if (!row) throw new Error("Entry not found.");
+    await requireGrant(cfg.grant);
     const title = cleanText(body[cfg.titleField] || body.title, 120);
+    const category = cleanText(body.category, 40);
     const amount = parseCents(body.amount);
     const date = parseDate(body.date);
+    const ownerId = String(body.ownerId || "");
     if (!title || amount === null || !date) throw new Error("A title, amount, and date are required.");
-    row[cfg.titleField] = title;
-    row.category = cleanText(body.category, 40);
-    row.amount_cents = amount;
-    row[cfg.dateField] = date;
-    row.recurring = RECURRING.includes(body.recurring) ? body.recurring : "none";
-    row.notes = cleanText(body.notes, 400);
-    row.owner_id = String(body.ownerId || row.owner_id);
-    await persist();
+    if (!cfg.categories.includes(category)) throw new Error("Choose a valid category.");
+    if (ownerId && !memory.users.some((row) => row.id === ownerId)) throw new Error("That person is not in this household.");
+    const patch = {
+      [cfg.titleField]: title,
+      category,
+      amount_cents: amount,
+      [cfg.dateField]: date,
+      recurring: RECURRING.includes(body.recurring) ? body.recurring : "none",
+      notes: cleanText(body.notes, 400),
+    };
+    if (ownerId) patch.owner_id = ownerId;
+    const { error } = await supabase.from(cfg.table).update(patch).eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async deleteLedger(kind, id) {
     const cfg = LEDGERS[kind];
-    const { user, vault } = requireGrant(cfg.grant);
-    vault[cfg.list] = vault[cfg.list].filter((row) => row.id !== id);
-    logActivity(user, kind, `Removed ${cfg.label}`);
-    await persist();
+    await requireGrant(cfg.grant);
+    const { error } = await supabase.from(cfg.table).delete().eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await logActivity(kind, `Removed ${cfg.label}`);
+    await reload();
     return { ok: true };
   },
 
   async savings() {
-    const { vault } = requireGrant("savings");
-    const items = vault.savings.map((account) => ({
+    await requireGrant("savings");
+    const items = memory.savings.map((account) => ({
       ...account,
-      owner_name: ownerName(account.owner_id),
-      entries: vault.savingsEntries.filter((row) => row.savings_id === account.id),
+      owner_name: lineOwner(account),
+      entries: memory.savingsEntries.filter((row) => row.savings_id === account.id),
     }));
     return { items, totalCents: items.reduce((sum, row) => sum + row.current_cents, 0) };
   },
 
   async addSavings(body) {
-    const { user, vault } = requireGrant("savings");
+    const { user } = await requireGrant("savings");
     const name = cleanText(body.name, 120);
     const target = parseCents(body.target ?? 0);
     const current = parseCents(body.current ?? 0);
     const monthly = parseCents(body.monthly ?? 0);
+    const ownerId = String(body.ownerId || user.id);
     if (!name || target === null || current === null || monthly === null) throw new Error("A name and valid amounts are required.");
-    const id = randomId();
-    vault.savings.unshift({
-      id,
-      owner_id: String(body.ownerId || user.id),
-      created_by: user.id,
+    if (!memory.users.some((row) => row.id === ownerId)) throw new Error("That person is not in this household.");
+    const { error } = await supabase.from("savings").insert({
+      household_id: memory.household.id,
+      owner_id: ownerId,
       name,
       target_cents: target,
       current_cents: current,
       monthly_cents: monthly,
       target_date: body.targetDate ? parseDate(body.targetDate) : null,
       notes: cleanText(body.notes, 400),
-      created_at: nowIso(),
     });
-    if (current > 0) {
-      vault.savingsEntries.unshift({
-        id: randomId(), savings_id: id, created_by: user.id, created_by_name: user.name,
-        kind: "deposit", amount_cents: current, entry_on: nowIso().slice(0, 10), notes: "Opening balance", created_at: nowIso(),
-      });
-    }
-    logActivity(user, "savings", `Opened savings pot: ${name}`);
-    await persist();
-    return { ok: true, id };
+    if (error) explainError(error);
+    await logActivity("savings", `Opened savings pot: ${name}`);
+    await reload();
+    return { ok: true };
   },
 
   async updateSavings(id, body) {
-    const { vault } = requireGrant("savings");
-    const row = vault.savings.find((item) => item.id === id);
-    if (!row) throw new Error("Savings pot not found.");
-    row.name = cleanText(body.name, 120);
-    row.target_cents = parseCents(body.target ?? row.target_cents / 100);
-    row.monthly_cents = parseCents(body.monthly ?? row.monthly_cents / 100);
-    row.target_date = body.targetDate ? parseDate(body.targetDate) : row.target_date;
-    row.notes = cleanText(body.notes, 400);
-    row.owner_id = String(body.ownerId || row.owner_id);
-    await persist();
+    const { user } = await requireGrant("savings");
+    const name = cleanText(body.name, 120);
+    const target = parseCents(body.target ?? 0);
+    const monthly = parseCents(body.monthly ?? 0);
+    const ownerId = String(body.ownerId || user.id);
+    if (!name || target === null || monthly === null) throw new Error("A name and valid amounts are required.");
+    const { error } = await supabase.from("savings").update({
+      name,
+      target_cents: target,
+      monthly_cents: monthly,
+      target_date: body.targetDate ? parseDate(body.targetDate) : null,
+      notes: cleanText(body.notes, 400),
+      owner_id: ownerId,
+    }).eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async savingsEntry(id, body) {
-    const { user, vault } = requireGrant("savings");
-    const row = vault.savings.find((item) => item.id === id);
-    if (!row) throw new Error("Savings pot not found.");
+    await requireGrant("savings");
     const amount = parseCents(body.amount);
     const kind = body.kind === "withdraw" ? "withdraw" : "deposit";
+    const date = parseDate(body.date) || today();
     if (!amount) throw new Error("Enter an amount.");
-    const next = kind === "deposit" ? row.current_cents + amount : row.current_cents - amount;
-    if (next < 0) throw new Error("That withdrawal is larger than the current balance.");
-    row.current_cents = next;
-    vault.savingsEntries.unshift({
-      id: randomId(), savings_id: id, created_by: user.id, created_by_name: user.name,
-      kind, amount_cents: amount, entry_on: parseDate(body.date) || nowIso().slice(0, 10),
-      notes: cleanText(body.notes, 200), created_at: nowIso(),
+    const { data, error } = await supabase.rpc("move_savings", {
+      pot: id,
+      kind,
+      amount,
+      entry_on: date,
+      note: cleanText(body.notes, 200),
     });
-    logActivity(user, "savings", `${kind === "deposit" ? "Deposited into" : "Withdrew from"} ${row.name}`);
-    await persist();
-    return { ok: true, currentCents: next };
+    if (error) explainError(error);
+    const pot = memory.savings.find((row) => row.id === id);
+    await logActivity("savings", `${kind === "deposit" ? "Deposited into" : "Withdrew from"} ${pot?.name || "a pot"}`);
+    await reload();
+    return { ok: true, currentCents: data };
   },
 
   async deleteSavings(id) {
-    const { user, vault } = requireGrant("savings");
-    vault.savings = vault.savings.filter((row) => row.id !== id);
-    vault.savingsEntries = vault.savingsEntries.filter((row) => row.savings_id !== id);
-    logActivity(user, "savings", "Removed a savings pot");
-    await persist();
+    await requireGrant("savings");
+    const { error } = await supabase.from("savings").delete().eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await logActivity("savings", "Removed a savings pot");
+    await reload();
     return { ok: true };
   },
 
   async projects() {
-    const { vault } = requireGrant("projects");
-    const items = vault.projects.map((project) => {
-      const entries = vault.projectEntries.filter((row) => row.project_id === project.id);
+    await requireGrant("projects");
+    const items = memory.projects.map((project) => {
+      const entries = memory.projectEntries.filter((row) => row.project_id === project.id);
       return {
         ...project,
-        owner_name: ownerName(project.owner_id),
+        owner_name: lineOwner(project),
         spent_cents: entries.reduce((sum, row) => sum + row.amount_cents, 0),
         entries,
       };
@@ -557,69 +704,78 @@ export const api = {
   },
 
   async addProject(body) {
-    const { user, vault } = requireGrant("projects");
+    const { user } = await requireGrant("projects");
     const name = cleanText(body.name, 120);
     const budget = parseCents(body.budget ?? 0);
+    const ownerId = String(body.ownerId || user.id);
     if (!name || budget === null) throw new Error("A name and budget are required.");
-    vault.projects.unshift({
-      id: randomId(),
-      owner_id: String(body.ownerId || user.id),
-      created_by: user.id,
+    const { error } = await supabase.from("projects").insert({
+      household_id: memory.household.id,
+      owner_id: ownerId,
       name,
       budget_cents: budget,
       status: PROJECT_STATUSES.includes(body.status) ? body.status : "planned",
       target_date: body.targetDate ? parseDate(body.targetDate) : null,
       notes: cleanText(body.notes, 400),
-      created_at: nowIso(),
     });
-    logActivity(user, "projects", `Opened life project: ${name}`);
-    await persist();
+    if (error) explainError(error);
+    await logActivity("projects", `Opened life project: ${name}`);
+    await reload();
     return { ok: true };
   },
 
   async updateProject(id, body) {
-    const { vault } = requireGrant("projects");
-    const row = vault.projects.find((item) => item.id === id);
-    if (!row) throw new Error("Project not found.");
-    row.name = cleanText(body.name, 120);
-    row.budget_cents = parseCents(body.budget ?? row.budget_cents / 100);
-    row.status = PROJECT_STATUSES.includes(body.status) ? body.status : row.status;
-    row.target_date = body.targetDate ? parseDate(body.targetDate) : row.target_date;
-    row.notes = cleanText(body.notes, 400);
-    row.owner_id = String(body.ownerId || row.owner_id);
-    await persist();
+    await requireGrant("projects");
+    const name = cleanText(body.name, 120);
+    const budget = parseCents(body.budget ?? 0);
+    if (!name || budget === null) throw new Error("A name and budget are required.");
+    const patch = {
+      name,
+      budget_cents: budget,
+      status: PROJECT_STATUSES.includes(body.status) ? body.status : "planned",
+      target_date: body.targetDate ? parseDate(body.targetDate) : null,
+      notes: cleanText(body.notes, 400),
+    };
+    if (body.ownerId) patch.owner_id = String(body.ownerId);
+    const { error } = await supabase.from("projects").update(patch).eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async projectEntry(id, body) {
-    const { user, vault } = requireGrant("projects");
-    const row = vault.projects.find((item) => item.id === id);
-    if (!row) throw new Error("Project not found.");
+    const { user } = await requireGrant("projects");
     const amount = parseCents(body.amount);
+    const date = parseDate(body.date) || today();
     if (!amount) throw new Error("Enter an amount.");
-    vault.projectEntries.unshift({
-      id: randomId(), project_id: id, created_by: user.id, created_by_name: user.name,
-      amount_cents: amount, entry_on: parseDate(body.date) || nowIso().slice(0, 10),
-      notes: cleanText(body.notes, 200), created_at: nowIso(),
+    const row = memory.projects.find((item) => item.id === id);
+    const { error } = await supabase.from("project_entries").insert({
+      household_id: memory.household.id,
+      project_id: id,
+      amount_cents: amount,
+      entry_on: date,
+      notes: cleanText(body.notes, 200),
+      created_by_name: user.name,
     });
-    logActivity(user, "projects", `Logged spend on ${row.name}`);
-    await persist();
+    if (error) explainError(error);
+    await logActivity("projects", `Logged spend on ${row?.name || "a project"}`);
+    await reload();
     return { ok: true };
   },
 
   async deleteProject(id) {
-    const { user, vault } = requireGrant("projects");
-    vault.projects = vault.projects.filter((row) => row.id !== id);
-    vault.projectEntries = vault.projectEntries.filter((row) => row.project_id !== id);
-    logActivity(user, "projects", "Removed a project");
-    await persist();
+    await requireGrant("projects");
+    const { error } = await supabase.from("projects").delete().eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await logActivity("projects", "Removed a project");
+    await reload();
     return { ok: true };
   },
 
   async dashboard(month) {
-    const user = requireUser();
+    const { user } = await requireGrant("household");
     const grants = grantsFor(user);
-    const vault = currentVault();
+    const vault = memory;
     const bounds = monthBounds(month);
     const inRange = (row, field) => row[field] >= bounds.start && row[field] <= bounds.end;
     const income = grants.income ? vault.incomes.filter((row) => inRange(row, "received_on")).reduce((s, r) => s + r.amount_cents, 0) : 0;
@@ -630,24 +786,14 @@ export const api = {
       ? vault.savingsEntries.filter((row) => row.entry_on >= bounds.start && row.entry_on <= bounds.end)
         .reduce((s, r) => s + (r.kind === "deposit" ? r.amount_cents : -r.amount_cents), 0)
       : 0;
-    const canSee = grants.household || grants.income || grants.expenses || grants.savings || grants.projects || grants.costs;
-    if (!canSee) {
-      return {
-        month: bounds.month,
-        totals: { income: 0, expenses: 0, costs: 0, outflow: 0, savingsTotal: 0, savingsMonth: 0, surplus: 0 },
-        ownerBreakdown: [], categories: [], trend: [], recent: [], savings: [], projects: [], locked: true,
-      };
-    }
-    const ownerBreakdown = grants.household
-      ? vault.users.filter((row) => row.role !== "guest").map((row) => ({
-        id: row.id,
-        name: row.name,
-        income_cents: vault.incomes.filter((item) => item.owner_id === row.id && inRange(item, "received_on")).reduce((s, r) => s + r.amount_cents, 0),
-        expense_cents: vault.expenses.filter((item) => item.owner_id === row.id && inRange(item, "spent_on")).reduce((s, r) => s + r.amount_cents, 0),
-        cost_cents: vault.costs.filter((item) => item.owner_id === row.id && inRange(item, "due_on")).reduce((s, r) => s + r.amount_cents, 0),
-        savings_cents: vault.savings.filter((item) => item.owner_id === row.id).reduce((s, r) => s + r.current_cents, 0),
-      }))
-      : [];
+    const ownerBreakdown = vault.users.map((row) => ({
+      id: row.id,
+      name: row.name,
+      income_cents: vault.incomes.filter((item) => item.owner_id === row.id && inRange(item, "received_on")).reduce((s, r) => s + r.amount_cents, 0),
+      expense_cents: vault.expenses.filter((item) => item.owner_id === row.id && inRange(item, "spent_on")).reduce((s, r) => s + r.amount_cents, 0),
+      cost_cents: vault.costs.filter((item) => item.owner_id === row.id && inRange(item, "due_on")).reduce((s, r) => s + r.amount_cents, 0),
+      savings_cents: vault.savings.filter((item) => item.owner_id === row.id).reduce((s, r) => s + r.current_cents, 0),
+    }));
     const book = [];
     const addBook = (row) => {
       if (!row.date || row.date < bounds.start || row.date > bounds.end) return;
@@ -656,51 +802,27 @@ export const api = {
     if (grants.income) {
       for (const row of vault.incomes) {
         addBook({
-          id: `in-${row.id}`,
-          date: row.received_on,
-          type: "Income",
-          kind: "income",
-          person: ownerName(row.owner_id),
-          owner_id: row.owner_id,
-          title: row.source,
-          category: row.category,
-          amount_cents: row.amount_cents,
-          flow: "in",
-          notes: row.notes || "",
+          id: `in-${row.id}`, date: row.received_on, type: "Income", kind: "income",
+          person: lineOwner(row), owner_id: row.owner_id, title: row.source, category: row.category,
+          amount_cents: row.amount_cents, flow: "in", notes: row.notes || "",
         });
       }
     }
     if (grants.expenses) {
       for (const row of vault.expenses) {
         addBook({
-          id: `ex-${row.id}`,
-          date: row.spent_on,
-          type: "Expense",
-          kind: "expense",
-          person: ownerName(row.owner_id),
-          owner_id: row.owner_id,
-          title: row.merchant,
-          category: row.category,
-          amount_cents: row.amount_cents,
-          flow: "out",
-          notes: row.notes || "",
+          id: `ex-${row.id}`, date: row.spent_on, type: "Expense", kind: "expense",
+          person: lineOwner(row), owner_id: row.owner_id, title: row.merchant, category: row.category,
+          amount_cents: row.amount_cents, flow: "out", notes: row.notes || "",
         });
       }
     }
     if (grants.costs) {
       for (const row of vault.costs) {
         addBook({
-          id: `co-${row.id}`,
-          date: row.due_on,
-          type: "Other cost",
-          kind: "cost",
-          person: ownerName(row.owner_id),
-          owner_id: row.owner_id,
-          title: row.title,
-          category: row.category,
-          amount_cents: row.amount_cents,
-          flow: "out",
-          notes: row.notes || "",
+          id: `co-${row.id}`, date: row.due_on, type: "Other cost", kind: "cost",
+          person: lineOwner(row), owner_id: row.owner_id, title: row.title, category: row.category,
+          amount_cents: row.amount_cents, flow: "out", notes: row.notes || "",
         });
       }
     }
@@ -708,17 +830,11 @@ export const api = {
       for (const row of vault.savingsEntries) {
         const pot = vault.savings.find((item) => item.id === row.savings_id);
         addBook({
-          id: `sv-${row.id}`,
-          date: row.entry_on,
-          type: row.kind === "withdraw" ? "Savings out" : "Savings in",
-          kind: "savings",
-          person: row.created_by_name || ownerName(pot?.owner_id),
-          owner_id: pot?.owner_id || row.created_by,
-          title: pot?.name || "Savings",
-          category: row.kind === "withdraw" ? "Withdrawal" : "Deposit",
-          amount_cents: row.amount_cents,
-          flow: row.kind === "withdraw" ? "out" : "in",
-          notes: row.notes || "",
+          id: `sv-${row.id}`, date: row.entry_on,
+          type: row.kind === "withdraw" ? "Savings out" : "Savings in", kind: "savings",
+          person: row.created_by_name || lineOwner(pot || {}), owner_id: pot?.owner_id || row.created_by,
+          title: pot?.name || "Savings", category: row.kind === "withdraw" ? "Withdrawal" : "Deposit",
+          amount_cents: row.amount_cents, flow: row.kind === "withdraw" ? "out" : "in", notes: row.notes || "",
         });
       }
     }
@@ -727,16 +843,11 @@ export const api = {
         const project = vault.projects.find((item) => item.id === row.project_id);
         addBook({
           id: `pr-${row.id}`,
-          date: row.spent_on || row.entry_on || String(row.created_at || "").slice(0, 10),
-          type: "Project",
-          kind: "project",
-          person: ownerName(project?.owner_id) || row.created_by_name || "Household",
-          owner_id: project?.owner_id,
-          title: project?.name || "Project",
-          category: "Life project",
-          amount_cents: row.amount_cents,
-          flow: "out",
-          notes: row.notes || "",
+          date: row.entry_on || String(row.created_at || "").slice(0, 10),
+          type: "Project", kind: "project",
+          person: lineOwner(project || {}) || row.created_by_name || "Household",
+          owner_id: project?.owner_id, title: project?.name || "Project", category: "Life project",
+          amount_cents: row.amount_cents, flow: "out", notes: row.notes || "",
         });
       }
     }
@@ -771,10 +882,11 @@ export const api = {
       categories,
       trend,
       recent: vault.activity.slice(0, 10),
-      savings: grants.savings ? vault.savings.map((row) => ({ id: row.id, name: row.name, target_cents: row.target_cents, current_cents: row.current_cents, owner_id: row.owner_id })) : [],
+      savings: grants.savings ? vault.savings.map((row) => ({ id: row.id, name: row.name, target_cents: row.target_cents, current_cents: row.current_cents, owner_id: row.owner_id, owner_name: lineOwner(row) })) : [],
       projects: grants.projects
         ? vault.projects.filter((row) => row.status !== "done").slice(0, 6).map((row) => ({
           ...row,
+          owner_name: lineOwner(row),
           spent_cents: vault.projectEntries.filter((item) => item.project_id === row.id).reduce((s, r) => s + r.amount_cents, 0),
         }))
         : [],
@@ -782,97 +894,106 @@ export const api = {
   },
 
   async board() {
-    const { vault } = requireGrant("plans");
+    await requireGrant("plans");
     return {
-      lists: [...vault.lists].sort((a, b) => a.order - b.order),
-      cards: vault.cards.map((card) => ({ ...card, owner_name: ownerName(card.ownerId) })),
+      lists: [...memory.lists].sort((a, b) => a.order - b.order),
+      cards: memory.cards.map((card) => ({ ...card, owner_name: card.owner_name || ownerName(card.ownerId) })),
     };
   },
 
   async addList(title) {
-    const { vault } = requireGrant("plans");
+    await requireGrant("plans");
     const name = cleanText(title, 60);
     if (!name) throw new Error("Give the column a name.");
-    vault.lists.push({ id: randomId(), title: name, order: vault.lists.length });
-    await persist();
+    const { error } = await supabase.from("lists").insert({
+      household_id: memory.household.id,
+      title: name,
+      position: memory.lists.length,
+    });
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async renameList(id, title) {
-    const { vault } = requireGrant("plans");
-    const list = vault.lists.find((row) => row.id === id);
-    if (!list) throw new Error("Column not found.");
-    list.title = cleanText(title, 60);
-    await persist();
+    await requireGrant("plans");
+    const name = cleanText(title, 60);
+    if (!name) throw new Error("Give the column a name.");
+    const { error } = await supabase.from("lists").update({ title: name }).eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async deleteList(id) {
-    const { vault } = requireGrant("plans");
-    if (vault.lists.length <= 1) throw new Error("Keep at least one column.");
-    vault.lists = vault.lists.filter((row) => row.id !== id);
-    vault.cards = vault.cards.filter((row) => row.listId !== id);
-    await persist();
+    await requireGrant("plans");
+    const { error } = await supabase.from("lists").delete().eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async addCard(body) {
-    const { user, vault } = requireGrant("plans");
+    const { user } = await requireGrant("plans");
     const title = cleanText(body.title, 140);
     if (!title) throw new Error("A card needs a title.");
-    const list = vault.lists.find((row) => row.id === body.listId) || vault.lists[0];
-    vault.cards.push({
-      id: randomId(),
-      listId: list.id,
+    const list = memory.lists.find((row) => row.id === body.listId) || memory.lists[0];
+    if (!list) throw new Error("Add a column first.");
+    const ownerId = String(body.ownerId || user.id);
+    const { error } = await supabase.from("cards").insert({
+      household_id: memory.household.id,
+      list_id: list.id,
       title,
       plan: cleanText(body.plan, 8000),
-      labels: Array.isArray(body.labels) ? body.labels.slice(0, 4) : [],
-      ownerId: String(body.ownerId || user.id),
-      due: body.due ? parseDate(body.due) : null,
-      order: vault.cards.filter((row) => row.listId === list.id).length,
-      checklist: [],
-      created_at: nowIso(),
+      labels: cleanLabels(body.labels),
+      owner_id: ownerId,
+      due_on: body.due ? parseDate(body.due) : null,
+      position: memory.cards.filter((row) => row.listId === list.id).length,
+      checklist: cleanChecklist(body.checklist),
     });
-    logActivity(user, "plans", `Added plan card: ${title}`);
-    await persist();
+    if (error) explainError(error);
+    await logActivity("plans", `Added plan card: ${title}`);
+    await reload();
     return { ok: true };
   },
 
   async updateCard(id, body) {
-    const { vault } = requireGrant("plans");
-    const card = vault.cards.find((row) => row.id === id);
-    if (!card) throw new Error("Card not found.");
-    if (body.title != null) card.title = cleanText(body.title, 140);
-    if (body.plan != null) card.plan = cleanText(body.plan, 8000);
-    if (body.labels) card.labels = body.labels.slice(0, 4);
-    if (body.ownerId) card.ownerId = String(body.ownerId);
-    if (body.due !== undefined) card.due = body.due ? parseDate(body.due) : null;
-    if (body.checklist) card.checklist = body.checklist.slice(0, 30);
-    await persist();
+    await requireGrant("plans");
+    const patch = {};
+    if (body.title != null) patch.title = cleanText(body.title, 140);
+    if (body.plan != null) patch.plan = cleanText(body.plan, 8000);
+    if (body.labels) patch.labels = cleanLabels(body.labels);
+    if (body.ownerId) patch.owner_id = String(body.ownerId);
+    if (body.due !== undefined) patch.due_on = body.due ? parseDate(body.due) : null;
+    if (body.checklist) patch.checklist = cleanChecklist(body.checklist);
+    if (body.listId && memory.lists.some((row) => row.id === body.listId)) patch.list_id = body.listId;
+    const { error } = await supabase.from("cards").update(patch).eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
-  async moveCard(id, listId, index) {
-    const { vault } = requireGrant("plans");
-    const card = vault.cards.find((row) => row.id === id);
-    if (!card) throw new Error("Card not found.");
-    if (!vault.lists.some((row) => row.id === listId)) throw new Error("Column not found.");
-    card.listId = listId;
-    card.order = Number.isFinite(index) ? index : 0;
-    await persist();
+  async moveCard(id, listId) {
+    await requireGrant("plans");
+    if (!memory.lists.some((row) => row.id === listId)) throw new Error("Column not found.");
+    const position = memory.cards.filter((row) => row.listId === listId).length;
+    const { error } = await supabase.from("cards").update({ list_id: listId, position }).eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async deleteCard(id) {
-    const { vault } = requireGrant("plans");
-    vault.cards = vault.cards.filter((row) => row.id !== id);
-    await persist();
+    await requireGrant("plans");
+    const { error } = await supabase.from("cards").delete().eq("id", id).eq("household_id", memory.household.id);
+    if (error) explainError(error);
+    await reload();
     return { ok: true };
   },
 
   async exportData() {
-    requireGrant("invite");
-    const vault = currentVault();
+    await requireGrant("household");
+    const vault = memory;
     return {
       household: vault.household,
       members: vault.users.map((row) => ({ id: row.id, name: row.name, role: row.role })),
@@ -885,6 +1006,151 @@ export const api = {
     };
   },
 
-  syncCode: getSyncCode,
-  exportEncrypted,
+  hasDeviceHouse() {
+    return hasLocalVault();
+  },
+
+  forgetDevice() {
+    forgetDeviceCopy();
+    return { ok: true };
+  },
+
+  async importDeviceHouse() {
+    const { user } = await requireAdmin();
+    const local = await openLocalVault();
+    if (!local) throw new Error("Nothing saved on this device could be opened.");
+    const hid = memory.household.id;
+    const rows = [
+      ...(local.incomes || []), ...(local.expenses || []), ...(local.costs || []),
+      ...(local.savings || []), ...(local.projects || []), ...(local.projectEntries || []),
+      ...(local.cards || []),
+    ];
+    if (rows.length > 1500) throw new Error("That device copy is too large to bring in at once.");
+    const legacyName = (ownerId) => local.users?.find((row) => row.id === ownerId)?.name || user.name;
+    const insert = async (table, payload) => {
+      const { error } = await supabase.from(table).insert(payload);
+      if (error) explainError(error);
+    };
+    for (const row of local.incomes || []) {
+      const title = cleanText(row.source, 120);
+      const date = parseDate(row.received_on);
+      if (!title || !date || !Number.isFinite(row.amount_cents)) continue;
+      await insert("incomes", {
+        household_id: hid,
+        owner_id: user.id,
+        owner_name: legacyName(row.owner_id),
+        source: title,
+        category: INCOME_CATEGORIES.includes(row.category) ? row.category : "Other",
+        amount_cents: Math.max(0, Math.round(row.amount_cents)),
+        received_on: date,
+        recurring: RECURRING.includes(row.recurring) ? row.recurring : "none",
+        notes: cleanText(row.notes, 400),
+      });
+    }
+    for (const row of local.expenses || []) {
+      const title = cleanText(row.merchant, 120);
+      const date = parseDate(row.spent_on);
+      if (!title || !date || !Number.isFinite(row.amount_cents)) continue;
+      await insert("expenses", {
+        household_id: hid,
+        owner_id: user.id,
+        owner_name: legacyName(row.owner_id),
+        merchant: title,
+        category: EXPENSE_CATEGORIES.includes(row.category) ? row.category : "Other",
+        amount_cents: Math.max(0, Math.round(row.amount_cents)),
+        spent_on: date,
+        recurring: RECURRING.includes(row.recurring) ? row.recurring : "none",
+        notes: cleanText(row.notes, 400),
+      });
+    }
+    for (const row of local.costs || []) {
+      const title = cleanText(row.title, 120);
+      const date = parseDate(row.due_on);
+      if (!title || !date || !Number.isFinite(row.amount_cents)) continue;
+      await insert("costs", {
+        household_id: hid,
+        owner_id: user.id,
+        owner_name: legacyName(row.owner_id),
+        title,
+        category: COST_CATEGORIES.includes(row.category) ? row.category : "Other",
+        amount_cents: Math.max(0, Math.round(row.amount_cents)),
+        due_on: date,
+        recurring: RECURRING.includes(row.recurring) ? row.recurring : "none",
+        notes: cleanText(row.notes, 400),
+      });
+    }
+    for (const row of local.savings || []) {
+      const name = cleanText(row.name, 120);
+      if (!name) continue;
+      await insert("savings", {
+        household_id: hid,
+        owner_id: user.id,
+        owner_name: legacyName(row.owner_id),
+        name,
+        target_cents: Math.max(0, Math.round(row.target_cents || 0)),
+        current_cents: Math.max(0, Math.round(row.current_cents || 0)),
+        monthly_cents: Math.max(0, Math.round(row.monthly_cents || 0)),
+        target_date: row.target_date ? parseDate(row.target_date) : null,
+        notes: cleanText(row.notes, 400),
+      });
+    }
+    const projectIds = new Map();
+    for (const row of local.projects || []) {
+      const name = cleanText(row.name, 120);
+      if (!name) continue;
+      const { data, error } = await supabase.from("projects").insert({
+        household_id: hid,
+        owner_id: user.id,
+        owner_name: legacyName(row.owner_id),
+        name,
+        budget_cents: Math.max(0, Math.round(row.budget_cents || row.target_cents || 0)),
+        status: PROJECT_STATUSES.includes(row.status) ? row.status : "planned",
+        target_date: row.target_date ? parseDate(row.target_date) : null,
+        notes: cleanText(row.notes, 400),
+      }).select("id").single();
+      if (error) explainError(error);
+      projectIds.set(row.id, data.id);
+    }
+    for (const row of local.projectEntries || []) {
+      const projectId = projectIds.get(row.project_id);
+      const date = parseDate(row.entry_on || row.spent_on);
+      if (!projectId || !date || !row.amount_cents) continue;
+      await insert("project_entries", {
+        household_id: hid,
+        project_id: projectId,
+        amount_cents: Math.max(1, Math.round(row.amount_cents)),
+        entry_on: date,
+        notes: cleanText(row.notes, 200),
+        created_by_name: row.created_by_name || user.name,
+      });
+    }
+    await reload();
+    const listByTitle = new Map(memory.lists.map((list) => [list.title, list.id]));
+    const oldTitles = new Map((local.lists || []).map((list) => [list.id, list.title]));
+    const fallback = memory.lists[0]?.id;
+    for (const row of local.cards || []) {
+      const title = cleanText(row.title, 140);
+      if (!title || !fallback) continue;
+      const listId = listByTitle.get(oldTitles.get(row.listId)) || fallback;
+      await insert("cards", {
+        household_id: hid,
+        list_id: listId,
+        title,
+        plan: cleanText(row.plan, 8000),
+        labels: cleanLabels(row.labels),
+        owner_id: user.id,
+        owner_name: legacyName(row.ownerId),
+        due_on: row.due ? parseDate(row.due) : null,
+        position: Number.isFinite(row.order) ? row.order : 0,
+        checklist: cleanChecklist(row.checklist),
+      });
+    }
+    await logActivity("setup", "Brought in the books saved on this device");
+    await reload();
+    return { ok: true };
+  },
+
+  syncCode() {
+    return "";
+  },
 };

@@ -334,6 +334,18 @@ export function wipeLocal() {
   localStorage.removeItem(META_KEY);
 }
 
+export function forgetDeviceCopy() {
+  wipeLocal();
+  localStorage.removeItem(HOUSES_KEY);
+  localStorage.removeItem(ACTIVE_KEY);
+  const drop = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key && (key.startsWith(`${BLOB_KEY}.`) || key === "omh.who")) drop.push(key);
+  }
+  drop.forEach((key) => localStorage.removeItem(key));
+}
+
 export function exportEncrypted() {
   const pack = localStorage.getItem(BLOB_KEY);
   const meta = getMeta();

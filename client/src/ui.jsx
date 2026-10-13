@@ -1,3 +1,4 @@
+import { useEffect, useId, useRef, useState } from "react";
 import { money } from "./format.js";
 
 export function Icon({ name }) {
@@ -16,34 +17,26 @@ export function Icon({ name }) {
     idea: "M12 3a6 6 0 0 1 4 10c0 2-1 3-2 4h-4c-1-1-2-2-2-4a6 6 0 0 1 4-10zm-2 16h4m-3 2h2",
   };
   return (
-    <svg className="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={paths[name] || paths.home} />
     </svg>
   );
 }
 
-export function OmhMark({ live = false }) {
-  const gid = live ? "omhGoldLive" : "omhGoldStill";
+export function OmhMark() {
   return (
-    <svg className={live ? "omh-live" : ""} viewBox="0 0 64 64" aria-hidden="true">
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#ffe7a0" />
-          <stop offset="50%" stopColor="#c9a227" />
-          <stop offset="100%" stopColor="#8b6914" />
-        </linearGradient>
-      </defs>
-      <circle className="omh-ring" cx="32" cy="32" r="29" fill="none" stroke={`url(#${gid})`} strokeWidth="3" />
-      <circle cx="32" cy="32" r="22.5" fill="#0b1220" />
-      <circle className="omh-spark" cx="32" cy="32" r="26" fill="none" stroke="#ffe7a0" strokeWidth="1.4" strokeDasharray="12 48" />
-      <path d="M18 40V24h5l9 11 9-11h5v16h-5V30l-9 11-9-11v10h-5z" fill="#f6f1e6" />
+    <svg className="mark" viewBox="0 0 64 64" aria-hidden="true">
+      <rect width="64" height="64" rx="16" fill="#14312c" />
+      <rect x="5.5" y="5.5" width="53" height="53" rx="12" fill="none" stroke="#c6a36a" strokeWidth="1.2" />
+      <path d="M17.5 46.5V19.5h6.4L32 34.6l8.1-15.1h6.4v27h-5.4V28.8L32 42.2l-9.1-13.4v17.7h-5.4z" fill="#f6f1e7" />
+      <rect x="46" y="46" width="7" height="7" rx="1.2" fill="#c6a36a" />
     </svg>
   );
 }
 
 export function Money({ cents, currency, signed }) {
   const value = Number(cents) || 0;
-  const cls = signed ? (value >= 0 ? "pos" : "neg") : "";
+  const cls = signed ? (value > 0 ? "pos" : value < 0 ? "neg" : "") : "";
   return <div className={`money ${cls}`}>{money(value, currency)}</div>;
 }
 
@@ -57,15 +50,62 @@ export function Field({ label, children, wide }) {
 }
 
 export function Modal({ title, onClose, children, footer }) {
+  const ref = useRef(null);
+  const titleId = useId();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const node = ref.current;
+    const previous = document.activeElement;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusables = () => [...node.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter((el) => !el.disabled);
+    const field = focusables().find((el) => el.matches("input, select, textarea"));
+    (field || focusables()[0])?.focus();
+    function onKey(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+      previous?.focus?.();
+    };
+  }, []);
+
   return (
-    <div className="modal-back" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-          <h3>{title}</h3>
+    <div className="modal-back" onMouseDown={onClose}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={ref}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="row spread">
+          <h3 id={titleId}>{title}</h3>
           <button className="btn-ghost btn-small" onClick={onClose} type="button">Close</button>
         </div>
         {children}
-        {footer ? <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>{footer}</div> : null}
+        {footer ? <div className="row modal-footer">{footer}</div> : null}
       </div>
     </div>
   );
@@ -81,10 +121,11 @@ export function Empty({ title, text, action }) {
   );
 }
 
-export function Progress({ value }) {
+export function Progress({ value, label = "Progress" }) {
+  const width = Math.max(0, Math.min(100, Math.round(value || 0)));
   return (
-    <div className="progress" aria-hidden="true">
-      <i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+    <div className="progress" role="progressbar" aria-valuenow={width} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+      <i style={{ width: `${width}%` }} />
     </div>
   );
 }
@@ -101,5 +142,18 @@ export function MonthNav({ month, onChange, label }) {
 
 export function Notice({ error, ok }) {
   if (!error && !ok) return null;
-  return <div className={`notice ${ok ? "ok" : ""}`}>{error || ok}</div>;
+  return <div className={`notice ${ok ? "ok" : ""}`} role={error ? "alert" : "status"}>{error || ok}</div>;
+}
+
+export function useNarrow(max = 760) {
+  const query = `(max-width: ${max}px)`;
+  const [on, setOn] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const listen = () => setOn(media.matches);
+    listen();
+    media.addEventListener("change", listen);
+    return () => media.removeEventListener("change", listen);
+  }, [query]);
+  return on;
 }

@@ -66,8 +66,8 @@ export function Exchange({ session }) {
       <header className="page-head">
         <div>
           <p className="kicker">Live desk</p>
-          <h2>Currency exchange</h2>
-          <p className="lede">Household books stay in {home}. Use this desk to read złoty against euro, dollars, Rwandan francs, Congo-Brazzaville CFA, and more.</p>
+          <h1>Currency exchange</h1>
+          <p className="lede">Household books stay in {home}. Use this desk when a price arrives in another currency — euro, dollar, franc, or shilling.</p>
         </div>
         <button className="btn-ghost" disabled={busy} onClick={() => refresh()}>{busy ? "Updating…" : "Refresh rates"}</button>
       </header>

@@ -14,6 +14,7 @@ import { People } from "./pages/People.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { Opening } from "./Opening.jsx";
 import { Advisor } from "./pages/Advisor.jsx";
+import { supabase } from "./supabaseClient.js";
 
 const NAV = [
   { to: "/", label: "Home", icon: "home", grant: "household" },
@@ -29,11 +30,26 @@ const NAV = [
   { to: "/settings", label: "Settings", icon: "gear", grant: "settings" },
 ];
 
+const TITLES = {
+  "/": "Home",
+  "/people": "People",
+  "/income": "Income",
+  "/expenses": "Expenses",
+  "/savings": "Savings",
+  "/projects": "Projects",
+  "/costs": "Other costs",
+  "/exchange": "Exchange",
+  "/plans": "Plans",
+  "/advisor": "Advisor",
+  "/settings": "Settings",
+};
+
 export default function App() {
   const [boot, setBoot] = useState(null);
   const [month, setMonth] = useState(currentMonth());
   const [theme, setTheme] = useState(() => localStorage.getItem("omh-theme") || "light");
   const [more, setMore] = useState(false);
+  const [recovery, setRecovery] = useState(false);
   const [introDone, setIntroDone] = useState(() => sessionStorage.getItem("omh.intro") === "done");
   const location = useLocation();
 
@@ -43,22 +59,58 @@ export default function App() {
   }
 
   useEffect(() => {
-    refresh().catch((err) => setBoot({ error: err.message }));
+    refresh().catch((err) => setBoot({ error: err.message, configured: true }));
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    function apply() {
+      const resolved = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.theme = resolved === "dark" ? "dark" : "light";
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", resolved === "dark" ? "#12100e" : "#f6f1e7");
+    }
+    apply();
     localStorage.setItem("omh-theme", theme);
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
   }, [theme]);
 
   useEffect(() => {
     setMore(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (!more) return undefined;
+    function onKey(event) {
+      if (event.key === "Escape") setMore(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [more]);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      if (event === "SIGNED_OUT") {
+        setRecovery(false);
+        refresh().catch((err) => setBoot({ error: err.message, configured: true }));
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const house = boot?.household?.name;
+    const page = TITLES[location.pathname];
+    document.title = boot?.user && house && page ? `${page} · ${house}` : "Our Money Hub";
+  }, [location.pathname, boot]);
+
   const joining = location.pathname.startsWith("/join") || location.pathname.startsWith("/create");
 
   const links = useMemo(() => {
-    if (!boot?.user) return [];
+    if (!boot?.user || !boot?.household) return [];
     return NAV.filter((item) => item.to === "/" || item.to === "/settings" || Boolean(boot.grants?.[item.grant]));
   }, [boot]);
 
@@ -67,19 +119,29 @@ export default function App() {
   }
 
   if (!boot) {
-    return <div className="start-wrap"><p>Opening Our Money Hub…</p></div>;
+    return <div className="start-wrap"><p className="lede">Opening Our Money Hub…</p></div>;
   }
-  if (boot.error) {
-    return <div className="start-wrap"><p>{boot.error}</p></div>;
-  }
-  if (!boot.user || joining) {
+  if (boot.error && boot.configured !== false && !boot.user) {
     return (
-      <Routes>
-        <Route path="/join/*" element={<Welcome boot={boot} onDone={refresh} />} />
-        <Route path="/create" element={<Welcome boot={boot} onDone={refresh} />} />
-        <Route path="*" element={<Welcome boot={boot} onDone={refresh} />} />
-      </Routes>
+      <div className="start-wrap">
+        <div className="gate gate-single">
+          <div className="gate-body">
+            <h1>Our Money Hub</h1>
+            <p className="lede">{boot.error}</p>
+            <button className="btn" type="button" onClick={() => { setBoot(null); refresh().catch((err) => setBoot({ error: err.message, configured: true })); }}>Try again</button>
+          </div>
+        </div>
+      </div>
     );
+  }
+  if (boot.configured === false) {
+    return <Welcome boot={boot} mode="offline" onDone={refresh} />;
+  }
+  if (recovery) {
+    return <Welcome boot={boot} mode="reset" onDone={() => { setRecovery(false); refresh(); }} />;
+  }
+  if (!boot.user || !boot.household || joining) {
+    return <Welcome boot={boot} onDone={refresh} />;
   }
 
   const session = boot;
@@ -88,15 +150,16 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <button className="skip" type="button" onClick={() => document.getElementById("content")?.focus()}>Skip to the books</button>
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><OmhMark live /></div>
+          <div className="brand-mark"><OmhMark /></div>
           <div>
-            <h1>OMH</h1>
+            <p className="brand-name">OMH</p>
             <p>{session.household?.name || "Our Money Hub"}</p>
           </div>
         </div>
-        <nav className="nav-list">
+        <nav className="nav-list" aria-label="Household">
           {links.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.to === "/"} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
               <Icon name={item.icon} />
@@ -109,10 +172,14 @@ export default function App() {
             <strong>{session.user.name}</strong>
             <span>{roleLine(session.user.role)}</span>
           </div>
+          <button className="sidebar-btn" type="button" onClick={async () => {
+            await api.logout();
+            await refresh();
+          }}>Sign out</button>
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" id="content" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Dashboard session={session} month={month} setMonth={setMonth} />} />
           <Route path="/people" element={gate(session, "people", <People session={session} onRefresh={refresh} />)} />
@@ -129,23 +196,28 @@ export default function App() {
         </Routes>
       </main>
 
-      <nav className="bottom-nav">
+      <nav className="bottom-nav" aria-label="Household">
         {mobileMain.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.to === "/"} className={({ isActive }) => isActive ? "active" : ""}>
             <Icon name={item.icon} />
             {item.label}
           </NavLink>
         ))}
-        <a href="#more" className={more ? "active" : ""} onClick={(event) => { event.preventDefault(); setMore((v) => !v); }}>
+        <button type="button" className={more ? "active" : ""} aria-expanded={more} aria-controls="more-menu" onClick={() => setMore((value) => !value)}>
           <Icon name="more" />
           More
-        </a>
+        </button>
       </nav>
       {more && (
-        <div className="more-sheet">
-          {mobileMore.map((item) => (
-            <NavLink key={item.to} to={item.to}>{item.label}</NavLink>
-          ))}
+        <div className="more-back" onClick={() => setMore(false)}>
+          <div className="more-sheet" id="more-menu" role="dialog" aria-label="More pages" onClick={(event) => event.stopPropagation()}>
+            {mobileMore.map((item) => (
+              <NavLink key={item.to} to={item.to} onClick={() => setMore(false)}>
+                <Icon name={item.icon} />
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -154,8 +226,8 @@ export default function App() {
 
 function roleLine(role) {
   if (role === "admin") return "Admin of this household";
-  if (role === "member" || role === "spouse") return "Member · full household";
-  return "Guest";
+  if (role === "member") return "Member of this household";
+  return "Signed in";
 }
 
 function gate(session, grant, node) {

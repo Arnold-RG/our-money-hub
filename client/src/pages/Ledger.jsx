@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { money, monthLabel, prettyDate, shiftMonth, today } from "../format.js";
-import { Empty, Field, Modal, MonthNav, Notice } from "../ui.jsx";
+import { Empty, Field, Modal, MonthNav, Notice, useNarrow } from "../ui.jsx";
 
 const KINDS = {
   income: {
@@ -42,6 +42,19 @@ export function Ledger({ kind, session, month, setMonth }) {
   const [busy, setBusy] = useState(false);
   const currency = session.household?.currency || "PLN";
   const members = session.members.filter((m) => m.role !== "guest");
+  const narrow = useNarrow();
+
+  function blankEntry(category) {
+    return {
+      title: "",
+      category: category || data?.categories?.[0] || "Other",
+      amount: "",
+      date: today(),
+      recurring: "none",
+      notes: "",
+      ownerId: session.user.id,
+    };
+  }
 
   async function load() {
     const payload = await api.ledger(meta.path, month);
@@ -101,20 +114,12 @@ export function Ledger({ kind, session, month, setMonth }) {
       <header className="page-head">
         <div>
           <p className="kicker">{meta.kicker}</p>
-          <h2>{meta.title}</h2>
+          <h1>{meta.title}</h1>
           <p className="lede">{meta.lede} Everyone in the household can add a line and see every other person’s lines.</p>
         </div>
         <div className="row">
           <MonthNav month={month} label={monthLabel(month)} onChange={(d) => setMonth(shiftMonth(month, d))} />
-          <button className="btn" onClick={() => setEditing({
-            title: "",
-            category: data?.categories[0] || "Other",
-            amount: "",
-            date: today(),
-            recurring: "none",
-            notes: "",
-            ownerId: session.user.id,
-          })}>{meta.add}</button>
+          <button className="btn" onClick={() => setEditing(blankEntry())}>{meta.add}</button>
         </div>
       </header>
       <Notice error={error} ok={ok} />
@@ -132,7 +137,34 @@ export function Ledger({ kind, session, month, setMonth }) {
       </section>
       <section className="card" style={{ marginTop: 14 }}>
         {!data?.items.length ? (
-          <Empty title={`No ${meta.title.toLowerCase()} this month`} text="Write it down once and the whole household will see it in Home." action={<button className="btn" onClick={() => setEditing({ title: "", category: data.categories[0], amount: "", date: today(), recurring: "none", notes: "", ownerId: session.user.id })}>{meta.add}</button>} />
+          <Empty title={`No ${meta.title.toLowerCase()} this month`} text="Write it down once and the whole household will see it on Home." action={<button className="btn" onClick={() => setEditing(blankEntry())}>{meta.add}</button>} />
+        ) : narrow ? (
+          <ul className="slips">
+            {data.items.map((row) => (
+              <li className="slip" key={row.id}>
+                <div className="slip-top">
+                  <span className="tag">{row.category}</span>
+                  <strong>{money(row.amount_cents, currency)}</strong>
+                </div>
+                <p className="slip-title">{row.source || row.merchant || row.title}</p>
+                <p className="hint">{prettyDate(row.received_on || row.spent_on || row.due_on)} · {row.owner_name} · {row.recurring === "none" ? "Once" : row.recurring}</p>
+                {row.notes ? <p className="hint">{row.notes}</p> : null}
+                <div className="row">
+                  <button className="btn-ghost btn-small" onClick={() => setEditing({
+                    id: row.id,
+                    title: row.source || row.merchant || row.title,
+                    category: row.category,
+                    amount: (row.amount_cents / 100).toString(),
+                    date: row.received_on || row.spent_on || row.due_on,
+                    recurring: row.recurring,
+                    notes: row.notes || "",
+                    ownerId: row.owner_id,
+                  })}>Edit</button>
+                  <button className="btn-ghost btn-small" onClick={() => remove(row.id)}>Remove</button>
+                </div>
+              </li>
+            ))}
+          </ul>
         ) : (
           <div className="table-wrap">
             <table>

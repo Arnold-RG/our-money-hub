@@ -61,8 +61,8 @@ export function Plans({ session }) {
       <header className="page-head">
         <div>
           <p className="kicker">The family board</p>
-          <h2>Plans</h2>
-          <p className="lede">Write the whole path of a project — how it starts, what happens in the middle, and how it ends. Drag a card when the work moves.</p>
+          <h1>Plans</h1>
+          <p className="lede">Write the whole path of a project — how it starts, what happens in the middle, and how it ends. Move a card when the work changes column.</p>
         </div>
         <div className="row">
           <input className="inline-input" value={column} placeholder="New column" onChange={(e) => setColumn(e.target.value)} />
@@ -92,23 +92,32 @@ export function Plans({ session }) {
             >
               <div className="board-col-head">
                 <h3>{list.title}</h3>
-                <button className="btn-ghost btn-small" onClick={async () => {
+                <button className="btn-ghost btn-small" type="button" aria-label={`Remove column ${list.title}`} onClick={async () => {
                   if (!window.confirm("Remove this column and its cards?")) return;
                   await api.deleteList(list.id);
                   await load();
-                }}>×</button>
+                }}>Remove</button>
               </div>
               <div className="board-cards">
                 {(cardsByList[list.id] || []).map((card) => (
                   <article
                     key={card.id}
                     className="plan-card"
-                    draggable
-                    onDragStart={(event) => event.dataTransfer.setData("text/plain", card.id)}
                     onClick={() => setEditing({ ...card, due: card.due || "" })}
                   >
                     <div className="label-row">
                       {card.labels.map((label) => <span key={label} className={`chip chip-${label.toLowerCase()}`}>{label}</span>)}
+                      <button
+                        type="button"
+                        className="drag-handle"
+                        draggable
+                        aria-label={`Drag ${card.title}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onDragStart={(event) => {
+                          event.stopPropagation();
+                          event.dataTransfer.setData("text/plain", card.id);
+                        }}
+                      >Drag</button>
                     </div>
                     <strong>{card.title}</strong>
                     {card.plan ? <p>{card.plan.slice(0, 140)}{card.plan.length > 140 ? "…" : ""}</p> : null}
@@ -117,6 +126,21 @@ export function Plans({ session }) {
                       {card.due ? <span>{prettyDate(card.due)}</span> : null}
                       {card.checklist?.length ? <span>{card.checklist.filter((item) => item.done).length}/{card.checklist.length}</span> : null}
                     </div>
+                    <label className="plan-move" onClick={(event) => event.stopPropagation()}>
+                      <span className="sr-only">Move {card.title}</span>
+                      <select
+                        value={list.id}
+                        aria-label={`Move ${card.title}`}
+                        onChange={async (event) => {
+                          const next = event.target.value;
+                          if (next === list.id) return;
+                          await api.moveCard(card.id, next);
+                          await load();
+                        }}
+                      >
+                        {board.lists.map((columnList) => <option key={columnList.id} value={columnList.id}>{columnList.title}</option>)}
+                      </select>
+                    </label>
                   </article>
                 ))}
                 <button className="ghost-add" onClick={() => setEditing({

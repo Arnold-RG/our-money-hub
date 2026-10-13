@@ -68,7 +68,7 @@ export function Savings({ session }) {
       <header className="page-head">
         <div>
           <p className="kicker">Kept aside</p>
-          <h2>Savings</h2>
+          <h1>Savings</h1>
           <p className="lede">Emergency funds, school, a home, a trip — every pot is visible to the whole household, and any member can add one.</p>
         </div>
         <button className="btn" onClick={() => setEditing({ name: "", target: "", current: "", monthly: "", targetDate: "", notes: "", ownerId: session.user.id })}>New pot</button>
