@@ -43,8 +43,8 @@ export function Advisor({ session, month, setMonth }) {
       <header className="page-head">
         <div>
           <p className="kicker">Live the income you have</p>
-          <h2>Advisor</h2>
-          <p className="lede">Recalculate income, spending, and savings, then follow a short list of household moves — how to keep more złoty and live inside this month’s pay.</p>
+          <h1>Advisor</h1>
+          <p className="lede">Recalculate income, spending, and savings, then follow a short list of household moves for this month’s pay.</p>
         </div>
         <div className="row">
           <MonthNav month={month} label={monthLabel(month)} onChange={(d) => setMonth(shiftMonth(month, d))} />

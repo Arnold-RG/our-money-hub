@@ -23,9 +23,12 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm run build
         env:
           VITE_BASE: /our-money-hub/
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
       - run: touch client/dist/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,0 +1,14 @@
+{
+  "name": "Our Money Hub",
+  "short_name": "OMH",
+  "description": "A private household ledger.",
+  "start_url": "/our-money-hub/",
+  "scope": "/our-money-hub/",
+  "display": "standalone",
+  "background_color": "#f6f1e7",
+  "theme_color": "#14312c",
+  "icons": [
+    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

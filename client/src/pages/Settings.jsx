@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api.js";
-import { copyText, joinUrl, shareInvite } from "../share.js";
+import { passwordProblem } from "../authRules.js";
+import { copyText, downloadJson, shareInvite } from "../share.js";
 import { Field, Notice } from "../ui.jsx";
 
 export function Settings({ session, theme, setTheme, onRefresh }) {
@@ -8,131 +9,200 @@ export function Settings({ session, theme, setTheme, onRefresh }) {
     name: session.household?.name || "",
     currency: session.household?.currency || "PLN",
   });
-  const [who, setWho] = useState(session.user.id);
+  const [name, setName] = useState(session.user.name || "");
+  const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [invite, setInvite] = useState(null);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const [busy, setBusy] = useState(false);
   const admin = session.user.role === "admin";
-  const syncCode = admin ? (session.syncCode || api.syncCode()) : "";
-  const url = session.joinUrl || (syncCode ? joinUrl(syncCode) : "");
-  const people = (session.members || []).filter((row) => row.role !== "guest");
-  const houses = session.houses || [];
+  const houses = (session.houses || []).filter((row) => row.id !== session.household?.id);
+  const deviceCopy = api.hasDeviceHouse();
+
+  async function run(task) {
+    setBusy(true);
+    setError("");
+    setOk("");
+    try {
+      await task();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <>
       <header className="page-head">
         <div>
           <p className="kicker">House</p>
-          <h2>Settings</h2>
+          <h1>Settings</h1>
           <p className="lede">
             {admin
-              ? "You manage the house name and the invite. Everyone in the house can add and see the same books, and chat together."
-              : "You can add and view every household line and join the household chat. Only an admin can change the house name or send invites."}
+              ? "You can rename the household and issue a join code. Everyone here can write in the books and the chat."
+              : "You can write in the books and the chat. An admin changes the household name and the join code."}
           </p>
         </div>
       </header>
       <Notice error={error} ok={ok} />
       <section className="card-grid">
-        <article className="card">
-          <h3>Who you are</h3>
-          <p className="lede">Pick the name you use in this household.</p>
-          <div className="form-grid" style={{ marginTop: 12 }}>
-            <Field label="Using this house as" wide>
-              <select value={who} onChange={(e) => setWho(e.target.value)}>
-                {people.map((row) => <option key={row.id} value={row.id}>{row.name}{row.role === "admin" ? " · admin" : ""}</option>)}
-              </select>
-            </Field>
-          </div>
-          <button className="btn" style={{ marginTop: 14 }} disabled={busy} type="button" onClick={async () => {
-            setBusy(true); setError("");
-            try {
-              await api.become(who);
-              setOk("This device now uses that name.");
+        <form className="card" onSubmit={(event) => {
+          event.preventDefault();
+          run(async () => {
+            await api.updateProfile(name);
+            setOk("Name updated.");
+            onRefresh?.();
+          });
+        }}>
+          <h2>Your account</h2>
+          <p className="lede">{session.user.email}</p>
+          <Field label="Name" wide>
+            <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+          </Field>
+          <div className="row">
+            <button className="btn" disabled={busy}>Save name</button>
+            <button className="btn-ghost" type="button" disabled={busy} onClick={() => run(async () => {
+              await api.logout();
               onRefresh?.();
-            } catch (err) {
-              setError(err.message);
-            } finally {
-              setBusy(false);
-            }
-          }}>Use this name</button>
-        </article>
+            })}>Sign out</button>
+          </div>
+        </form>
+
+        <form className="card" onSubmit={(event) => {
+          event.preventDefault();
+          run(async () => {
+            if (passwords.next !== passwords.confirm) throw new Error("Those passwords don’t match.");
+            const problem = passwordProblem(passwords.next, session.user.email);
+            if (problem) throw new Error(problem);
+            await api.updatePassword(passwords);
+            setPasswords({ current: "", next: "", confirm: "" });
+            setOk("Password updated.");
+          });
+        }}>
+          <h2>Password</h2>
+          <p className="lede">Your current password is required. The new one needs 10 characters, with letters and numbers.</p>
+          <Field label="Current password" wide>
+            <input type="password" autoComplete="current-password" value={passwords.current} onChange={(e) => setPasswords({ ...passwords, current: e.target.value })} required />
+          </Field>
+          <Field label="New password" wide>
+            <input type="password" autoComplete="new-password" minLength={10} maxLength={72} value={passwords.next} onChange={(e) => setPasswords({ ...passwords, next: e.target.value })} required />
+          </Field>
+          <Field label="Confirm new password" wide>
+            <input type="password" autoComplete="new-password" minLength={10} maxLength={72} value={passwords.confirm} onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })} required />
+          </Field>
+          <button className="btn" disabled={busy}>Update password</button>
+        </form>
 
         {admin && (
-          <form className="card" onSubmit={async (event) => {
+          <form className="card" onSubmit={(event) => {
             event.preventDefault();
-            setBusy(true); setError("");
-            try {
+            run(async () => {
               await api.household(house);
               setOk("Household details updated.");
               onRefresh?.();
-            } catch (err) {
-              setError(err.message);
-            } finally {
-              setBusy(false);
-            }
+            });
           }}>
-            <h3>Household</h3>
-            <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="Name" wide>
-                <input value={house.name} onChange={(e) => setHouse({ ...house, name: e.target.value })} />
-              </Field>
-              <Field label="Main currency" wide>
-                <select value={house.currency} onChange={(e) => setHouse({ ...house, currency: e.target.value })}>
-                  {(session.catalogs?.currencies || ["PLN"]).map((code) => <option key={code}>{code}</option>)}
-                </select>
-              </Field>
-            </div>
-            <button className="btn" style={{ marginTop: 14 }} disabled={busy}>Save household</button>
+            <h2>Household</h2>
+            <Field label="Name" wide>
+              <input value={house.name} onChange={(e) => setHouse({ ...house, name: e.target.value })} />
+            </Field>
+            <Field label="Main currency" wide>
+              <select value={house.currency} onChange={(e) => setHouse({ ...house, currency: e.target.value })}>
+                {(session.catalogs?.currencies || ["PLN"]).map((code) => <option key={code}>{code}</option>)}
+              </select>
+            </Field>
+            <button className="btn" disabled={busy}>Save household</button>
           </form>
         )}
 
         {admin && (
           <article className="card">
-            <h3>Invite members</h3>
-            <p className="lede">Only the admin can send this. People open the link or paste the code and add their name.</p>
-            <p className="hint">{url}</p>
-            <textarea readOnly value={syncCode} rows={4} />
-            <div className="row" style={{ marginTop: 10 }}>
-              <button className="btn" type="button" onClick={async () => {
-                try {
-                  const how = await shareInvite({ url, code: syncCode, name: house.name });
-                  setOk(how === "shared" ? "Invite sent from this device." : "Link and code copied.");
-                } catch (err) {
-                  setError(err.message);
-                }
-              }}>Send invite</button>
-              <button className="btn-ghost" type="button" onClick={async () => { await copyText(url); setOk("Join link copied."); }}>Copy link</button>
-              <button className="btn-ghost" type="button" onClick={async () => { await copyText(syncCode || ""); setOk("Join code copied."); }}>Copy code</button>
+            <h2>Invite</h2>
+            <p className="lede">A new code replaces the previous one. People create their own account, then paste the code.</p>
+            {invite && (
+              <>
+                <p className="hint">{invite.url}</p>
+                <textarea readOnly rows={3} spellCheck={false} value={invite.code} />
+              </>
+            )}
+            <div className="row">
+              <button className="btn" type="button" disabled={busy} onClick={() => run(async () => {
+                const next = await api.rotateInvite();
+                setInvite(next);
+                setOk("New join code ready. The previous one no longer works.");
+              })}>{invite ? "Issue another code" : "Issue a join code"}</button>
+              {invite && (
+                <>
+                  <button className="btn-ghost" type="button" onClick={async () => {
+                    try {
+                      const how = await shareInvite({ url: invite.url, code: invite.code, name: house.name });
+                      setOk(how === "shared" ? "Invite sent." : "Link and code copied.");
+                    } catch (err) {
+                      setError(err.message);
+                    }
+                  }}>Send invite</button>
+                  <button className="btn-ghost" type="button" onClick={async () => { await copyText(invite.code); setOk("Join code copied."); }}>Copy code</button>
+                </>
+              )}
             </div>
           </article>
         )}
 
-        {houses.length > 1 && (
+        {houses.length > 0 && (
           <article className="card">
-            <h3>Other households on this device</h3>
-            <div className="home-actions" style={{ marginTop: 12 }}>
-              {houses.filter((row) => row.id !== session.household?.id).map((row) => (
-                <button key={row.id} className="btn-ghost" type="button" disabled={busy} onClick={async () => {
-                  setBusy(true); setError("");
-                  try {
-                    await api.switchHouse(row.id);
-                    onRefresh?.();
-                  } catch (err) {
-                    setError(err.message);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}>Open {row.name}</button>
+            <h2>Other households</h2>
+            <div className="home-actions">
+              {houses.map((row) => (
+                <button key={row.id} className="btn-ghost" type="button" disabled={busy} onClick={() => run(async () => {
+                  await api.switchHouse(row.id);
+                  onRefresh?.();
+                })}>Open {row.name}</button>
               ))}
             </div>
           </article>
         )}
 
         <article className="card">
-          <h3>Display</h3>
+          <h2>A copy of the books</h2>
+          <p className="lede">The file contains names and amounts from this household. Keep it private.</p>
+          <button className="btn-ghost" type="button" disabled={busy} onClick={() => run(async () => {
+            const data = await api.exportData();
+            const slug = String(house.name || "household").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "household";
+            downloadJson(`omh-${slug}.json`, data);
+            setOk("Books downloaded.");
+          })}>Download the books</button>
+        </article>
+
+        {deviceCopy && (
+          <article className="card">
+            <h2>Books saved on this device</h2>
+            <p className="lede">An older copy of a household may still be in this browser. Bringing it in adds those lines to the household you’re in now. Chat is left behind. Pots come in at their current balance.</p>
+            <div className="row">
+              {admin && (
+                <button className="btn" type="button" disabled={busy} onClick={() => run(async () => {
+                  if (!window.confirm("Bring the device copy into this household?")) return;
+                  await api.importDeviceHouse();
+                  setOk("The device copy is in this household.");
+                  onRefresh?.();
+                })}>Bring it in</button>
+              )}
+              <button className="btn-ghost" type="button" disabled={busy} onClick={() => run(async () => {
+                if (!window.confirm("Remove the household copy stored in this browser?")) return;
+                api.forgetDevice();
+                setOk("The device copy was removed.");
+                onRefresh?.();
+              })}>Remove device copy</button>
+            </div>
+          </article>
+        )}
+
+        <article className="card">
+          <h2>Display</h2>
           <div className="row">
-            <button className={theme === "light" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("light")}>Light</button>
-            <button className={theme === "dark" ? "btn" : "btn-ghost"} type="button" onClick={() => setTheme("dark")}>Dark</button>
+            {[["light", "Light"], ["dark", "Dark"], ["system", "Match this device"]].map(([id, label]) => (
+              <button key={id} className={theme === id ? "btn" : "btn-ghost"} type="button" aria-pressed={theme === id} onClick={() => setTheme(id)}>{label}</button>
+            ))}
           </div>
         </article>
       </section>

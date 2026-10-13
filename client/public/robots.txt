@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://arnold-rg.github.io/our-money-hub/sitemap.xml

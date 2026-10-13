@@ -32,7 +32,7 @@ export function buildAdvice({ dash, savings = [], projects = [], currency = "PLN
     ideas.push({
       tone: "warn",
       title: "This month spends more than it earns",
-      body: `Outflow is ${money(Math.abs(surplus), currency)} above income. Freeze entertainment and extras until the books are even. Keep housing, food, and transport. Move every leftover złoty to the emergency pot.`,
+      body: `Outflow is ${money(Math.abs(surplus), currency)} above income. Freeze entertainment and extras until the books are even. Keep housing, food, and transport. Move whatever is left into the emergency pot.`,
     });
   } else if (income && saveShare < 0.1) {
     ideas.push({
@@ -79,7 +79,7 @@ export function buildAdvice({ dash, savings = [], projects = [], currency = "PLN
     const gap = Math.max(0, hungryProject.budget_cents - hungryProject.spent_cents);
     ideas.push({
       tone: "idea",
-      title: `Feed “${hungryProject.name}” from leftover złoty`,
+      title: `Feed “${hungryProject.name}” from what is left`,
       body: gap
         ? `The project still needs ${money(gap, currency)}. This month’s surplus of ${money(surplus, currency)} would cover ${Math.min(100, Math.round((surplus / gap) * 100))}% of the remaining budget if you send it there on purpose.`
         : "That project is fully funded. Mark it done or raise the budget if the work grew.",
@@ -101,7 +101,7 @@ export function buildAdvice({ dash, savings = [], projects = [], currency = "PLN
     ideas.push({
       tone: "idea",
       title: "Live on 50% needs, 30% wants, 20% saved",
-      body: `Needs/spend are running at ${Math.round(needsShare * 100)}% of income (aim 50%). Wants should stay near ${money(targetWants, currency)}. Saved should be near ${money(targetSave, currency)}. Cook more meals at home, delay one optional buy, and name every złoty that is left.`,
+      body: `Needs and spending are running at ${Math.round(needsShare * 100)}% of income. The aim is 50%. Wants should stay near ${money(targetWants, currency)}, and savings near ${money(targetSave, currency)}. Cook more meals at home, delay one optional buy, and give every leftover amount a name.`,
     });
   }
 
