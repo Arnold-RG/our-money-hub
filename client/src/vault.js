@@ -1,10 +1,12 @@
 import { decryptJson, encodeSyncCode, encryptJson, randomBytes, randomId } from "./security.js";
+import { idbClear, idbGet, idbPut } from "./idb.js";
 
 const META_KEY = "omh.meta";
 const BLOB_KEY = "omh.blob";
 const KEY_KEY = "omh.vk";
 const HOUSES_KEY = "omh.houses";
 const ACTIVE_KEY = "omh.activeHouse";
+const IDB_ACTIVE = "active";
 const JSONBLOB = "https://jsonblob.com/api/jsonBlob";
 const BYTEBIN = "https://bytebin.lucko.me";
 
@@ -33,6 +35,36 @@ function hydrateVault(vault) {
     }));
   }
   return vault;
+}
+
+async function readPack(houseId) {
+  if (houseId) {
+    const scoped = await idbGet(`${BLOB_KEY}.${houseId}`);
+    if (scoped?.iv && scoped?.ct) return scoped;
+  }
+  const active = await idbGet(IDB_ACTIVE);
+  if (active?.iv && active?.ct) return active;
+  // Migrate legacy localStorage ciphertext once.
+  const legacyRaw = localStorage.getItem(houseId ? `${BLOB_KEY}.${houseId}` : BLOB_KEY)
+    || localStorage.getItem(BLOB_KEY);
+  if (!legacyRaw) return null;
+  try {
+    const pack = JSON.parse(legacyRaw);
+    if (pack?.iv && pack?.ct) {
+      await writePack(pack, houseId);
+      localStorage.removeItem(BLOB_KEY);
+      if (houseId) localStorage.removeItem(`${BLOB_KEY}.${houseId}`);
+      return pack;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function writePack(pack, houseId) {
+  await idbPut(IDB_ACTIVE, pack);
+  if (houseId) await idbPut(`${BLOB_KEY}.${houseId}`, pack);
 }
 
 export function wipeOldLoginStore() {
@@ -124,17 +156,17 @@ export async function activateHouse(id) {
   if (!house) throw new Error("That household is not saved on this device.");
   localStorage.setItem(KEY_KEY, house.key);
   localStorage.setItem(META_KEY, JSON.stringify({ blobId: house.blobId }));
-  const pack = JSON.parse(localStorage.getItem(`${BLOB_KEY}.${id}`) || localStorage.getItem(BLOB_KEY) || "null");
+  const pack = await readPack(id);
   if (!pack) throw new Error("That household copy is missing on this device.");
   vaultKey = b64ToBytes(house.key);
   memory = hydrateVault(await decryptJson(pack, vaultKey));
-  localStorage.setItem(BLOB_KEY, JSON.stringify(pack));
+  await writePack(pack, id);
   localStorage.setItem(ACTIVE_KEY, id);
   return memory;
 }
 
 export function hasLocalVault() {
-  return listHouses().length > 0 || Boolean(localStorage.getItem(BLOB_KEY) && localStorage.getItem(KEY_KEY));
+  return listHouses().length > 0 || Boolean(localStorage.getItem(KEY_KEY));
 }
 
 export function getMeta() {
@@ -166,9 +198,10 @@ export function setVault(next) {
 }
 
 export async function openLocalVault() {
-  const pack = JSON.parse(localStorage.getItem(BLOB_KEY) || "null");
   const keyB64 = localStorage.getItem(KEY_KEY);
-  if (!pack || !keyB64) return null;
+  if (!keyB64) return null;
+  const pack = await readPack(localStorage.getItem(ACTIVE_KEY) || undefined);
+  if (!pack) return null;
   vaultKey = b64ToBytes(keyB64);
   memory = hydrateVault(await decryptJson(pack, vaultKey));
   return memory;
@@ -190,10 +223,7 @@ export async function importVault(pack, keyBytes, blobId) {
   const meta = getMeta();
   if (blobId) meta.blobId = blobId;
   localStorage.setItem(META_KEY, JSON.stringify(meta));
-  localStorage.setItem(BLOB_KEY, JSON.stringify(pack));
-  if (memory.household?.id) {
-    localStorage.setItem(`${BLOB_KEY}.${memory.household.id}`, JSON.stringify(pack));
-  }
+  await writePack(pack, memory.household?.id);
   snapshotHouse();
   return memory;
 }
@@ -203,10 +233,7 @@ export async function persist(createRemote = false) {
   memory.revision = (memory.revision || 0) + 1;
   memory.updatedAt = new Date().toISOString();
   const pack = await encryptJson(memory, vaultKey);
-  localStorage.setItem(BLOB_KEY, JSON.stringify(pack));
-  if (memory.household?.id) {
-    localStorage.setItem(`${BLOB_KEY}.${memory.household.id}`, JSON.stringify(pack));
-  }
+  await writePack(pack, memory.household?.id);
   try {
     await pushRemote(pack, createRemote);
   } catch (err) {
@@ -318,7 +345,7 @@ export async function refreshFromRemote() {
     const remote = hydrateVault(await decryptJson(pack, vaultKey));
     if ((remote.revision || 0) > (memory?.revision || 0)) {
       memory = remote;
-      localStorage.setItem(BLOB_KEY, JSON.stringify({ iv: pack.iv, ct: pack.ct }));
+      await writePack({ iv: pack.iv, ct: pack.ct }, memory.household?.id);
     }
   } catch {
     // Keep the local copy if the network copy cannot be read.
@@ -326,21 +353,26 @@ export async function refreshFromRemote() {
   return memory;
 }
 
-export function wipeLocal() {
+export async function wipeLocal() {
   memory = null;
   vaultKey = null;
   localStorage.removeItem(BLOB_KEY);
   localStorage.removeItem(KEY_KEY);
   localStorage.removeItem(META_KEY);
+  try {
+    await idbClear();
+  } catch {
+    /* ignore */
+  }
 }
 
-export function exportEncrypted() {
-  const pack = localStorage.getItem(BLOB_KEY);
+export async function exportEncrypted() {
+  const pack = await readPack(localStorage.getItem(ACTIVE_KEY) || undefined);
   const meta = getMeta();
   return {
     app: "omh",
     blobId: meta.blobId || "",
-    pack: pack ? JSON.parse(pack) : null,
+    pack,
     exportedAt: new Date().toISOString(),
   };
 }
