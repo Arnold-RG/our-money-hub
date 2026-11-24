@@ -270,10 +270,14 @@ def finance_summary(request: Request, organization_id: str, db: Session = Depend
     except ServiceAuthError as e:
         raise HTTPException(e.status, str(e)) from e
     s = get_settings()
-    if not s.omh_ragi_workspace_id:
-        raise HTTPException(503, "OMH_RAGI_WORKSPACE_ID is not configured")
     if organization_id != s.omh_ragi_organization_id:
         raise HTTPException(404, "Unknown organization_id")
-    return reports.service_summary(db, s.omh_ragi_workspace_id, today())
+    if not s.omh_ragi_workspace_id:
+        # Signed and verified, but the owner has not linked a workspace yet: say so, invent nothing.
+        d = today()
+        return {"source": "omh", "schema_version": "1.0", "as_of": d.isoformat(), "month": d.strftime("%Y-%m"),
+                "has_data": False, "linked": False, "by_currency": {}, "ai_budgets": [],
+                "note": "No OMH workspace is linked to this organization yet."}
+    return {**reports.service_summary(db, s.omh_ragi_workspace_id, today()), "linked": True}
 
 

@@ -151,6 +151,11 @@ def test_reservation_missing_fx_fails_closed(api, svc):
 def test_workspace_not_configured(api, svc, monkeypatch):
     monkeypatch.setattr(get_settings(), "omh_ragi_workspace_id", "")
     assert post(svc, "/budget-reservations", FLAT).status_code == 503
+    r = svc.get("/api/v1/finance-summary?organization_id=arnovagroup", headers=signed(b""))
+    assert r.status_code == 200
+    body = r.json()
+    _validator("finance-summary.schema.json").validate(body)
+    assert body["linked"] is False and body["has_data"] is False and body["by_currency"] == {}
 
 
 def _usage_event(eid="evt-00000001", usage="u-1", source="ragi"):
