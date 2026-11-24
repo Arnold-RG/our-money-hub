@@ -1,0 +1,85 @@
+/*
+ * Arnova Ecosystem v2 — shared design tokens (RAGI + Our Money Hub).
+ * Created by Arnold Rurangwa / Arnova Group.
+ *
+ * Contrast: every text token reaches WCAG AA 4.5:1 (Forge review B3, 2026-11-25).
+ * Palette is PENDING the owner's decision (spec §12 illustrative vs the live Arnova site vs logo C2):
+ * swap the six brand values below and the accents — nothing else references raw colours.
+ *
+ * Palette from master spec §12. The spec calls these "illustrative" and asks
+ * production to use the previously approved brand values — owner to confirm
+ * (spec gap #25). Each app copies this file; do not import across repos.
+ *
+ * Product identity: RAGI uses --arn-accent = caramel; OMH may set
+ * --arn-accent to soft green. Everything else is shared.
+ */
+:root {
+  /* Brand */
+  --arn-chocolate: #302119;
+  --arn-forest: #193f30;
+  --arn-brown: #79533d;
+  --arn-caramel: #c38d58;
+  --arn-cream: #f5ead9;
+  --arn-sage: #72917c;
+
+  /* Type & shape */
+  --arn-font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --arn-font-display: "Fraunces", "Inter", ui-serif, Georgia, serif;
+  --arn-radius-sm: 10px;
+  --arn-radius: 16px;
+  --arn-radius-lg: 24px;
+  --arn-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --arn-blur: saturate(180%) blur(22px);
+  --arn-hit: 44px; /* house minimum touch target */
+  --arn-disabled: color-mix(in oklab, var(--arn-text) 38%, transparent);
+}
+
+/* Dark (default) */
+:root,
+[data-theme="dark"] {
+  --arn-bg: #0f0b09;
+  --arn-bg-glow: radial-gradient(1200px 600px at 10% -10%, rgba(195, 141, 88, 0.14), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(25, 63, 48, 0.35), transparent 60%);
+  --arn-surface: #17110e;
+  --arn-surface-2: #201814;
+  --arn-surface-3: #2a201a;
+  --arn-border: rgba(245, 234, 217, 0.08);
+  --arn-border-strong: rgba(245, 234, 217, 0.16);
+  --arn-text: #f5ead9;
+  --arn-muted: rgba(245, 234, 217, 0.62);
+  --arn-faint: rgba(245, 234, 217, 0.58); /* 5.4:1 on surface-3 (Forge B3) */
+  --arn-accent: #c38d58;
+  --arn-accent-ink: #1a120c;
+  --arn-positive: #8fb49a;
+  --arn-warning: #e0b061;
+  --arn-danger: #e0796b;
+  --arn-info: #8ea8c3;
+  --arn-glass: rgba(23, 17, 14, 0.66);
+  --arn-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 50px -20px rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="light"] {
+  --arn-bg: #f7f1e8;
+  --arn-bg-glow: radial-gradient(1200px 600px at 10% -10%, rgba(195, 141, 88, 0.18), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(114, 145, 124, 0.18), transparent 60%);
+  --arn-surface: #fffdf9;
+  --arn-surface-2: #f4ece0;
+  --arn-surface-3: #eadfce;
+  --arn-border: rgba(48, 33, 25, 0.1);
+  --arn-border-strong: rgba(48, 33, 25, 0.2);
+  --arn-text: #302119;
+  --arn-muted: rgba(48, 33, 25, 0.72);
+  --arn-faint: rgba(48, 33, 25, 0.72); /* AA on bg + surface-3 (Forge B3) */
+  --arn-accent: #7f5530; /* 5.8:1 on bg; white text 6.2:1 */
+  --arn-accent-ink: #fffaf3;
+  --arn-positive: #2f6b4f;
+  --arn-warning: #7d5510;
+  --arn-danger: #a3402f;
+  --arn-info: #3f6385;
+  --arn-glass: rgba(255, 252, 247, 0.72);
+  --arn-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 20px 40px -24px rgba(48, 33, 25, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --arn-ease: linear; }
+}

@@ -5,9 +5,9 @@
   "description": "Our Money Hub v2 web app. Created by Arnold Rurangwa / Arnova Group.",
   "author": "Arnold Rurangwa / Arnova Group",
   "scripts": {
-    "dev": "next dev -p 3100",
+    "dev": "next dev -p 3420",
     "build": "next build",
-    "start": "next start -p 3100",
+    "start": "next start -p 3420",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test"

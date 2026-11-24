@@ -71,7 +71,7 @@ def report_limits(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depend
 
 # ---------- exchange rates (global reference data) ----------
 def rate_view(r) -> dict:
-    return {"id": r.id, "base": r.base, "quote": r.quote, "rate": str(Decimal(r.rate).normalize()),
+    return {"id": r.id, "base": r.base, "quote": r.quote, "rate": format(Decimal(r.rate).normalize(), "f"),
             "effective_date": r.effective_date.isoformat(), "source": r.source, "provider": r.provider, "via": r.via,
             "rate_type": r.rate_type, "source_url": r.source_url, "fetched_at": r.fetched_at.isoformat()}
 

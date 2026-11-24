@@ -1,0 +1,226 @@
+"use client";
+
+import { useState } from "react";
+import { ExternalLink, Landmark, RefreshCw, ShieldCheck } from "lucide-react";
+import { api, type Rate } from "@/lib/api";
+import { useWs } from "@/lib/hooks";
+import { refreshAll, useApp } from "@/providers/app-provider";
+import { CURRENCIES, CURRENCY_LABEL, type Currency } from "@/lib/money";
+import { niceDate, todayIso } from "@/lib/labels";
+import { Badge, Button, Card, ErrorNote, Field, Input, SectionTitle, Select, Skeleton } from "@/components/ui";
+import { PageHeader } from "@/components/finance/page-header";
+
+const PROVIDER: Record<string, string> = { nbp: "NBP · Narodowy Bank Polski", ecb: "ECB · European Central Bank", bnr: "BNR · National Bank of Rwanda", manual: "Manual · this workspace only" };
+
+function Rates() {
+  const { me } = useApp();
+  const { data: rates, mutate } = useWs<Rate[]>("/exchange-rates");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [base, setBase] = useState<Currency>("USD");
+  const [quote, setQuote] = useState<Currency>("RWF");
+  const [rate, setRate] = useState("");
+  const [date, setDate] = useState(todayIso());
+  const groups = ["manual", "nbp", "ecb", "bnr"].map((p) => [p, rates?.filter((r) => r.provider === p) ?? []] as const).filter(([, r]) => r.length);
+  return (
+    <Card id="rates">
+      <SectionTitle
+        title="Exchange rates"
+        hint="Official mid rates with their publication date. Totals use the newest rate in date; an out-of-date rate is refused, not used."
+        action={
+          !me?.is_demo && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              icon={<RefreshCw size={14} />}
+              onClick={async () => {
+                setBusy(true);
+                setMsg(null);
+                setError(null);
+                try {
+                  const r = await api<{ stored: Rate[]; errors: Record<string, string>; cached?: boolean }>("/exchange-rates/sync", { method: "POST" });
+                  setMsg(r.cached ? "Rates were synced in the last few minutes." : `Synced ${r.stored.length} rates${Object.keys(r.errors).length ? `; unavailable: ${Object.keys(r.errors).join(", ")}` : ""}.`);
+                  mutate();
+                  refreshAll();
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Sync now
+            </Button>
+          )
+        }
+      />
+      {msg && <p className="mb-3 text-sm text-positive">{msg}</p>}
+      <ErrorNote error={error} />
+      {!rates ? (
+        <Skeleton className="h-40" />
+      ) : groups.length === 0 ? (
+        <p className="text-sm text-muted">No rates on file yet.</p>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {groups.map(([p, rows]) => (
+            <div key={p} className="rounded-2xl border border-line p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold">
+                <Landmark size={15} className="text-accent" /> {PROVIDER[p] ?? p}
+              </p>
+              <ul className="mt-3 flex flex-col gap-2 text-sm">
+                {rows.map((r) => (
+                  <li key={r.id} className="flex items-start justify-between gap-3">
+                    <span>
+                      1 {r.base} → {r.quote}
+                      <span className="block text-xs text-faint">
+                        {niceDate(r.effective_date, { day: "numeric", month: "short", year: "numeric" })} · {r.source}
+                        {r.via ? ` via ${r.via}` : ""}
+                      </span>
+                    </span>
+                    <span className="tnum font-semibold">{r.rate}</span>
+                  </li>
+                ))}
+              </ul>
+              {rows[0]?.source_url && (
+                <a href={rows[0].source_url} target="_blank" rel="noreferrer" className="hit mt-1 inline-flex items-center gap-1 text-xs text-accent">
+                  Source <ExternalLink size={11} />
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <form
+        className="mt-6 grid gap-3 border-t border-line pt-5 sm:grid-cols-[1fr_1fr_1.2fr_1.2fr_auto] sm:items-end"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setError(null);
+          try {
+            await api("/exchange-rates", { method: "POST", json: { base, quote, rate, effective_date: date } });
+            setRate("");
+            setMsg("Manual rate saved for this workspace.");
+            mutate();
+            refreshAll();
+          } catch (err) {
+            setError((err as Error).message);
+          }
+        }}
+      >
+        <Field label="From">{(id) => <Select id={id} value={base} onChange={(e) => setBase(e.target.value as Currency)}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</Select>}</Field>
+        <Field label="To">{(id) => <Select id={id} value={quote} onChange={(e) => setQuote(e.target.value as Currency)}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</Select>}</Field>
+        <Field label="Rate">{(id) => <Input id={id} inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 1450.25" required />}</Field>
+        <Field label="Effective date">{(id) => <Input id={id} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />}</Field>
+        <Button type="submit" variant="secondary">Add manual rate</Button>
+      </form>
+      <p className="mt-3 text-xs text-faint">Manual rates apply to this workspace only and win over official rates for the same date. Sources: NBP Table A/B (api.nbp.pl), ECB reference rates and BNR, relayed by frankfurter.dev where noted.</p>
+    </Card>
+  );
+}
+
+function Security() {
+  const { me, refreshMe } = useApp();
+  const [setup, setSetup] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  if (!me) return null;
+  return (
+    <Card>
+      <SectionTitle title="Two-step sign-in" hint="Authenticator app codes (TOTP). Secrets are stored encrypted." />
+      {me.mfa_enabled ? (
+        <p className="flex items-center gap-2 text-sm text-positive">
+          <ShieldCheck size={17} /> On for this account.
+        </p>
+      ) : me.is_demo ? (
+        <p className="text-sm text-muted">Not available in a demo session.</p>
+      ) : setup ? (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              await api("/auth/mfa/enable", { method: "POST", json: { code } });
+              setSetup(null);
+              refreshMe();
+            } catch (err) {
+              setError((err as Error).message);
+            }
+          }}
+        >
+          <p className="text-sm text-muted">Add this key to your authenticator app, then enter the 6-digit code it shows.</p>
+          <code className="break-all rounded-xl bg-surface-3 px-3 py-2 text-sm">{setup.secret}</code>
+          <Field label="Code">{(id) => <Input id={id} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} required />}</Field>
+          <ErrorNote error={error} />
+          <Button type="submit">Turn on</Button>
+        </form>
+      ) : (
+        <Button variant="secondary" onClick={async () => setSetup(await api("/auth/mfa/setup", { method: "POST" }))} icon={<ShieldCheck size={16} />}>
+          Set up two-step sign-in
+        </Button>
+      )}
+    </Card>
+  );
+}
+
+function WorkspaceCard() {
+  const { workspace, refreshMe } = useApp();
+  const [name, setName] = useState(workspace?.name ?? "");
+  const [base, setBase] = useState<Currency>(workspace?.base_currency ?? "PLN");
+  const [saved, setSaved] = useState(false);
+  if (!workspace) return null;
+  return (
+    <Card>
+      <SectionTitle title="Workspace" hint="Personal and Business books are completely separate." />
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          await api("/workspaces/current", { method: "PATCH", json: { name, base_currency: base } });
+          await refreshMe();
+          setSaved(true);
+        }}
+      >
+        <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} />}</Field>
+        <Field label="Home currency" hint="Default for new accounts and budgets">
+          {(id) => (
+            <Select id={id} value={base} onChange={(e) => { setBase(e.target.value as Currency); setSaved(false); }}>
+              {CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c} · {CURRENCY_LABEL[c]}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <div className="flex items-center gap-3">
+          <Button type="submit" variant="secondary">Save</Button>
+          {saved && <Badge tone="positive">Saved</Badge>}
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+export default function SettingsPage() {
+  const { workspace } = useApp();
+  return (
+    <>
+      <PageHeader eyebrow="Settings" title="Rates, workspace and security" />
+      <div className="flex flex-col gap-6">
+        <Rates />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <WorkspaceCard key={workspace?.id} />
+          <Security />
+        </div>
+        <Card>
+          <SectionTitle title="About" />
+          <p className="text-sm text-muted">
+            Our Money Hub, the financial engine of the Arnova ecosystem. Created by Arnold Rurangwa / Arnova Group.
+          </p>
+          <p className="mt-2 text-xs text-faint">Money is stored in whole minor units (grosze, cents, francs) and every entry is double-entry balanced.</p>
+        </Card>
+      </div>
+    </>
+  );
+}

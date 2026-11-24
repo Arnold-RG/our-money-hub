@@ -1,0 +1,143 @@
+@import "tailwindcss";
+@import "../styles/arnova-tokens.css";
+
+/*
+ * OMH product identity: sage accent over the shared Arnova palette (ecosystem-contracts/design).
+ * The palette is pending the owner's decision, so every colour lives in token variables only:
+ * swap arnova-tokens.css (brand) or the four values below (OMH accent) and nothing else changes.
+ * Contrast (WCAG 1.4.3, computed): dark sage 8.2:1 on surface, light sage 4.8:1 on surface-3,
+ * accent-2 light #7f5530 4.9:1 on surface-3, accent-ink on accent ≥ 6.1:1.
+ */
+:root,
+[data-theme="dark"] {
+  --omh-accent: #8fb49a;
+  --omh-accent-2: #c38d58;
+  --omh-accent-ink: #0d1a13;
+  --omh-grid: rgba(245, 234, 217, 0.06);
+  --arn-accent: var(--omh-accent);
+  --arn-accent-ink: var(--omh-accent-ink);
+}
+[data-theme="light"] {
+  --omh-accent: #2f6b4f;
+  --omh-accent-2: #7f5530;
+  --omh-accent-ink: #f7fff9;
+  --omh-grid: rgba(48, 33, 25, 0.07);
+  --arn-accent: var(--omh-accent);
+  --arn-accent-ink: var(--omh-accent-ink);
+}
+
+@theme inline {
+  --color-bg: var(--arn-bg);
+  --color-surface: var(--arn-surface);
+  --color-surface-2: var(--arn-surface-2);
+  --color-surface-3: var(--arn-surface-3);
+  --color-line: var(--arn-border);
+  --color-line-strong: var(--arn-border-strong);
+  --color-ink: var(--arn-text);
+  --color-muted: var(--arn-muted);
+  --color-faint: var(--arn-faint);
+  --color-accent: var(--omh-accent);
+  --color-accent-2: var(--omh-accent-2);
+  --color-accent-ink: var(--omh-accent-ink);
+  --color-positive: var(--arn-positive);
+  --color-warning: var(--arn-warning);
+  --color-danger: var(--arn-danger);
+  --color-info: var(--arn-info);
+  --color-chocolate: var(--arn-chocolate);
+  --color-forest: var(--arn-forest);
+  --color-caramel: var(--arn-caramel);
+  --color-cream: var(--arn-cream);
+  --color-sage: var(--arn-sage);
+  --font-sans: var(--font-inter), var(--arn-font-sans);
+  --font-display: var(--font-fraunces), var(--arn-font-display);
+  --radius-card: var(--arn-radius-lg);
+}
+
+html {
+  background: var(--arn-bg);
+  color: var(--arn-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+body {
+  min-height: 100dvh;
+  background-image: var(--arn-bg-glow);
+  background-attachment: fixed;
+  font-feature-settings: "cv11", "ss01", "tnum" 0;
+}
+.tnum { font-variant-numeric: tabular-nums lining-nums; }
+.display { font-family: var(--font-display); font-optical-sizing: auto; letter-spacing: -0.02em; }
+
+.card {
+  background: color-mix(in oklab, var(--arn-surface) 88%, transparent);
+  border: 1px solid var(--arn-border);
+  border-radius: var(--arn-radius-lg);
+  box-shadow: var(--arn-shadow);
+}
+.glass {
+  background: var(--arn-glass);
+  -webkit-backdrop-filter: var(--arn-blur);
+  backdrop-filter: var(--arn-blur);
+  border: 1px solid var(--arn-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+/* No blur support: go nearly opaque so text under the dock never shows through (Forge S2). */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: color-mix(in oklab, var(--arn-surface) 96%, transparent); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: var(--arn-surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+.hairline { border-color: var(--arn-border); }
+
+/* Aurora behind the hero: drifts ONCE (4.5 s) and settles, so nothing loops (WCAG 2.2.2). */
+.aurora {
+  position: absolute; inset: -40%; pointer-events: none; opacity: 0.55; filter: blur(48px);
+  background:
+    radial-gradient(35% 45% at 25% 35%, color-mix(in oklab, var(--omh-accent) 45%, transparent), transparent 70%),
+    radial-gradient(30% 40% at 75% 30%, color-mix(in oklab, var(--omh-accent-2) 40%, transparent), transparent 70%),
+    radial-gradient(40% 40% at 55% 85%, color-mix(in oklab, var(--arn-forest) 70%, transparent), transparent 70%);
+  animation: aurora 4.5s var(--arn-ease) 1 forwards;
+}
+@keyframes aurora {
+  0% { transform: translate3d(-4%, -2%, 0) rotate(0deg) scale(1); }
+  100% { transform: translate3d(4%, 3%, 0) rotate(8deg) scale(1.08); }
+}
+.grid-bg {
+  background-image: linear-gradient(var(--omh-grid) 1px, transparent 1px), linear-gradient(90deg, var(--omh-grid) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse at top, black 30%, transparent 75%);
+}
+
+:focus-visible { outline: 2px solid var(--omh-accent); outline-offset: 2px; border-radius: 10px; }
+::selection { background: color-mix(in oklab, var(--omh-accent) 35%, transparent); }
+
+/* Touch targets: 44 px house minimum on touch screens; 16 px inputs so iOS never zooms. */
+@media (pointer: coarse) {
+  .hit, button, [role="button"], a.btn { min-height: var(--arn-hit, 44px); }
+  input, select, textarea { font-size: 16px !important; min-height: var(--arn-hit, 44px); }
+}
+.hit { min-height: var(--arn-hit, 44px); min-width: var(--arn-hit, 44px); }
+
+/* Content never hides behind the mobile dock (WCAG 2.4.11). */
+.dock-safe { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) { .dock-safe { padding-bottom: 2rem; } }
+html { scroll-padding-bottom: 110px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora { animation: none; transform: none; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+.recharts-cartesian-axis-tick-value { fill: var(--arn-faint); font-size: 11px; }
+.recharts-tooltip-cursor { stroke: var(--arn-border-strong); }
+input[type="date"]::-webkit-calendar-picker-indicator { filter: var(--omh-picker, none); opacity: 0.6; }
+[data-theme="dark"] { --omh-picker: invert(0.9); color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+
+/* Dialog surface: opaque enough for long forms in either theme. */
+.glass-solid {
+  background: color-mix(in oklab, var(--arn-surface) 97%, transparent);
+  border: 1px solid var(--arn-border-strong);
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.55);
+}
