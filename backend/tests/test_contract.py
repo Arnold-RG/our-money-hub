@@ -193,13 +193,21 @@ def test_finance_summary(api, svc):
     assert svc.get("/api/v1/finance-summary?organization_id=arnovagroup").status_code == 401
 
 
-def test_registration_closed_after_first_owner(monkeypatch):
-    monkeypatch.setattr(get_settings(), "allow_registration", False)
-    c = TestClient(app)
+def test_registration_closed_by_default_and_owner_needs_setup_token(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "allow_registration", False)
+    monkeypatch.setattr(s, "omh_owner_setup_token", "")
     h = {"X-OMH-Client": "web"}
-    assert c.get("/api/v1/auth/config").json()["registration_open"] is True
-    first = c.post("/api/v1/auth/register", json={"email": "first@example.com", "password": "x" * 12, "display_name": "Owner"}, headers=h)
-    assert first.status_code == 200
+    body = {"email": "first@example.com", "password": "x" * 12, "display_name": "Owner"}
+    c = TestClient(app)
+    assert c.get("/api/v1/auth/config").json()["registration_open"] is False
+    assert c.post("/api/v1/auth/register", json=body, headers=h).status_code == 403  # no token configured: closed
+    monkeypatch.setattr(s, "omh_owner_setup_token", "one-time-setup-token-for-tests")
+    assert c.get("/api/v1/auth/config").json()["owner_setup"] is True
+    assert c.post("/api/v1/auth/register", json={**body, "setup_token": "wrong"}, headers=h).status_code == 403
+    ok = c.post("/api/v1/auth/register", json={**body, "setup_token": "one-time-setup-token-for-tests"}, headers=h)
+    assert ok.status_code == 200
+    again = TestClient(app).post("/api/v1/auth/register", headers=h, json={**body, "email": "second@example.com",
+                                                                           "setup_token": "one-time-setup-token-for-tests"})
+    assert again.status_code == 403  # the token works once: an owner now exists
     assert TestClient(app).get("/api/v1/auth/config").json()["registration_open"] is False
-    second = TestClient(app).post("/api/v1/auth/register", json={"email": "second@example.com", "password": "x" * 12, "display_name": "B"}, headers=h)
-    assert second.status_code == 403

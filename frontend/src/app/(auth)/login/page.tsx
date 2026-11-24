@@ -20,14 +20,17 @@ export default function LoginPage() {
   const [mfa, setMfa] = useState(false);
   const [demo, setDemo] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
+  const [ownerSetup, setOwnerSetup] = useState(false);
+  const [setupToken, setSetupToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ demo_login: boolean; registration_open: boolean }>("/auth/config")
+    api<{ demo_login: boolean; registration_open: boolean; owner_setup?: boolean }>("/auth/config")
       .then((c) => {
         setDemo(c.demo_login);
         setRegOpen(c.registration_open);
+        setOwnerSetup(Boolean(c.owner_setup));
       })
       .catch(() => {});
   }, []);
@@ -47,7 +50,7 @@ export default function LoginPage() {
         return done();
       }
       if (mode === "register") {
-        await api("/auth/register", { method: "POST", json: { email, password, display_name: name } });
+        await api("/auth/register", { method: "POST", json: { email, password, display_name: name, ...(ownerSetup ? { setup_token: setupToken } : {}) } });
         return done();
       }
       const r = await api<{ mfa_required?: boolean }>("/auth/login", { method: "POST", json: { email, password } });
@@ -121,7 +124,7 @@ export default function LoginPage() {
           </div>
           <h2 className="display text-3xl">{mfa ? "Two-step sign-in" : mode === "signin" ? "Welcome back" : "Create your hub"}</h2>
           <p className="mt-2 text-sm text-muted">
-            {mfa ? "Enter the 6-digit code from your authenticator app." : mode === "signin" ? (regOpen ? "Sign in, or create the owner account for this hub." : "Sign in to your books.") : "The first account becomes the owner. Personal and Business workspaces are created, empty and ready."}
+            {mfa ? "Enter the 6-digit code from your authenticator app." : mode === "signin" ? (regOpen ? "Sign in, or create the owner account for this hub." : "Sign in to your books.") : (ownerSetup ? "One-time owner setup. " : "") + "Personal and Business workspaces are created, empty and ready."}
           </p>
           {!mfa && regOpen && (
             <div className="mt-6">
@@ -133,6 +136,11 @@ export default function LoginPage() {
               <Field label="Authenticator code">{(id) => <Input id={id} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} required />}</Field>
             ) : (
               <>
+                {mode === "register" && ownerSetup && (
+                  <Field label="Owner setup token" hint="The one-time token from the server environment">
+                    {(id) => <Input id={id} type="password" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} autoComplete="off" required />}
+                  </Field>
+                )}
                 {mode === "register" && <Field label="Your name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required />}</Field>}
                 <Field label="Email">{(id) => <Input id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />}</Field>
                 <Field label="Password" hint={mode === "register" ? "At least 12 characters" : undefined}>

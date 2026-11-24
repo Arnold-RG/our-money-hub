@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import secrets
 import time
 import uuid
@@ -56,6 +57,7 @@ def _ip(request: Request) -> str:
 
 
 class RegisterIn(BaseModel):
+    setup_token: str | None = Field(default=None, max_length=200)
     email: EmailStr
     password: str = Field(min_length=12, max_length=200)
     display_name: str = Field(min_length=1, max_length=120)
@@ -97,23 +99,34 @@ def demo_enabled() -> bool:
     return s.demo_login_enabled and s.app_env == "development"
 
 
-def registration_open(db: Session) -> bool:
-    """Closed by default. The first real (non-demo) account on an empty database becomes the owner."""
-    if get_settings().allow_registration:
-        return True
+def _no_real_users(db: Session) -> bool:
     return db.scalar(select(func.count()).select_from(User).where(User.is_demo.is_(False))) == 0
+
+
+def owner_setup_pending(db: Session) -> bool:
+    """Owner bootstrap: only with a configured one-time setup token, and only while no real account exists."""
+    return bool(get_settings().omh_owner_setup_token) and _no_real_users(db)
+
+
+def registration_open(db: Session) -> bool:
+    return get_settings().allow_registration or owner_setup_pending(db)
 
 
 @router.get("/config")
 def auth_config(db: Session = Depends(get_db)):
-    return {"demo_login": demo_enabled(), "mfa": "totp", "registration_open": registration_open(db)}
+    return {"demo_login": demo_enabled(), "mfa": "totp", "registration_open": registration_open(db),
+            "owner_setup": owner_setup_pending(db) and not get_settings().allow_registration}
 
 
 @router.post("/register")
 def register(body: RegisterIn, resp: Response, request: Request, db: Session = Depends(get_db)):
     throttle.check(f"reg:{_ip(request)}")
-    if not registration_open(db):
-        raise HTTPException(403, "Registration is closed. Ask the owner for access.")
+    s = get_settings()
+    if not s.allow_registration:
+        token = s.omh_owner_setup_token
+        if not (owner_setup_pending(db) and body.setup_token
+                and hmac.compare_digest(body.setup_token.encode(), token.encode())):
+            raise HTTPException(403, "Registration is closed. Ask the owner for access.")
     email = body.email.lower()
     if email.endswith("@" + DEMO_DOMAIN) or db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "An account with this email already exists")

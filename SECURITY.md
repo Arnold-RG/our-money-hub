@@ -6,7 +6,7 @@ Our Money Hub holds private financial records. These controls are in the code to
 - **Two-step sign-in:** optional TOTP. Secrets are encrypted at rest (Fernet), attempts are limited and a code cannot be replayed.
 - **Sessions:** opaque, server-side and revocable (only a SHA-256 of the token is stored), delivered as an HttpOnly SameSite cookie. Sign-out revokes the session.
 - **CSRF:** state-changing browser requests must carry the `X-OMH-Client` header, which other sites cannot set cross-origin.
-- **Registration:** closed by default (`ALLOW_REGISTRATION=false`). Only the first account on an empty database can register, and it becomes the owner.
+- **Registration:** closed by default (`ALLOW_REGISTRATION=false`). The owner account can be created once, on a database with no real users, and only with the one-time `OMH_OWNER_SETUP_TOKEN` from the environment. With no token set, nobody can register.
 - **Demo login:** off by default and honoured only in development. Each visitor gets a private, empty workspace.
 - **Isolation:** every query is scoped to a workspace the user belongs to, and non-members get 404. Manual exchange rates apply to one workspace only.
 - **Ledger integrity:** in PostgreSQL, a deferred trigger checks that every journal entry balances, and append-only triggers protect journal lines and the audit log. Posted transactions cannot be deleted.

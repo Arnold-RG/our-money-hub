@@ -32,8 +32,10 @@ class Settings(BaseSettings):
     ecosystem_max_clock_skew_seconds: int = 300
     omh_ragi_workspace_id: str = ""  # workspace that RAGI's org maps to (spec gap #23: owner decision)
     omh_ragi_organization_id: str = "arnovagroup"
-    # Registration: closed by default. The very first account on an empty database becomes the owner.
+    # Registration: closed by default. The owner account is created once, with a one-time setup token
+    # (OMH_OWNER_SETUP_TOKEN, set in the environment, never committed) on a database with no real users.
     allow_registration: bool = False
+    omh_owner_setup_token: str = ""
     rates_auto_sync: bool = False  # refresh official FX rates every 6h while the API runs
     lockout_attempts: int = 5
     lockout_minutes: int = 15

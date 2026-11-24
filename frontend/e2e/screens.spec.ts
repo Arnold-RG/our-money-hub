@@ -6,7 +6,7 @@ import path from "node:path";
  * Empty states first. Then a few entries are added through the UI's own API, every one
  * labelled "Test …" so no screenshot can be mistaken for real figures.
  */
-const OUT = path.resolve(__dirname, "../../screenshots");
+const OUT = process.env.OMH_SHOTS_DIR || path.resolve(__dirname, "../../screenshots");
 const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 900 },
   { name: "mobile", width: 390, height: 844 },
