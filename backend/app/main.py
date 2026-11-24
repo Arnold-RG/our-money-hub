@@ -1,6 +1,9 @@
 """Our Money Hub v2 API. Created by Arnold Rurangwa / Arnova Group."""
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,7 +14,40 @@ from app.core.money import MoneyError
 from app.modules.ledger.service import LedgerError
 
 settings = get_settings()
-app = FastAPI(title="Our Money Hub API", version="2.0.0",
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    task = None
+    if settings.rates_auto_sync:
+        task = asyncio.create_task(_rates_loop())
+    yield
+    if task:
+        task.cancel()
+
+
+async def _rates_loop():
+    """Refresh official NBP/ECB/BNR reference rates every 6 hours (stand-in for the planned Celery beat job)."""
+    from app.database.session import SessionLocal
+    from app.modules.currencies.service import sync_all
+
+    while True:
+        def run():
+            db = SessionLocal()
+            try:
+                sync_all(db)
+                db.commit()
+            finally:
+                db.close()
+
+        try:
+            await asyncio.to_thread(run)
+        except Exception:  # noqa: BLE001 - keep the loop alive; failures surface as stale-rate signals
+            pass
+        await asyncio.sleep(6 * 3600)
+
+
+app = FastAPI(lifespan=lifespan, title="Our Money Hub API", version="2.0.0",
               description="Financial engine of Arnova Group — created by Arnold Rurangwa / Arnova Group.",
               docs_url="/api/docs", openapi_url="/api/openapi.json")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],

@@ -146,7 +146,8 @@ def add_manual(db: Session, ws: str, base: str, quote: str, rate: Decimal, effec
 
 def _store(db: Session, *, base: str, quote: str, rate: Decimal, eff: date, source: str, provider: str,
            url: str, via: str | None = None, rate_type: str = "mid") -> ExchangeRate:
-    exists = db.scalar(select(ExchangeRate).where(ExchangeRate.workspace_id.is_(None), ExchangeRate.base == base, ExchangeRate.quote == quote,
+    exists = db.scalar(select(ExchangeRate).where(ExchangeRate.workspace_id.is_(None), ExchangeRate.base == base,
+                                                  ExchangeRate.quote == quote,
                                                   ExchangeRate.effective_date == eff, ExchangeRate.source == source,
                                                   ExchangeRate.rate_type == rate_type))
     if exists:
@@ -181,7 +182,8 @@ def sync_ecb(db: Session, client: httpx.Client) -> list[ExchangeRate]:
     resp.raise_for_status()
     return [_store(db, base="EUR", quote=i["quote"], rate=Decimal(str(i["rate"])), eff=date.fromisoformat(i["date"]),
                    source="ECB euro reference rate", provider="ecb", via="frankfurter.dev",
-                   url="https://data.ecb.europa.eu/") for i in resp.json() if i.get("quote") in CURRENCIES]
+                   url="https://data.ecb.europa.eu/")
+            for i in resp.json() if i.get("quote") in CURRENCIES and i.get("quote") != i.get("base")]
 
 
 def sync_bnr(db: Session, client: httpx.Client) -> list[ExchangeRate]:
@@ -190,7 +192,7 @@ def sync_bnr(db: Session, client: httpx.Client) -> list[ExchangeRate]:
     resp.raise_for_status()
     return [_store(db, base="RWF", quote=i["quote"], rate=Decimal(str(i["rate"])), eff=date.fromisoformat(i["date"]),
                    source="BNR reference rate", provider="bnr", via="frankfurter.dev", url="https://www.bnr.rw/exchangeRate")
-            for i in resp.json() if i.get("quote") in CURRENCIES]
+            for i in resp.json() if i.get("quote") in CURRENCIES and i.get("quote") != i.get("base")]
 
 
 def sync_all(db: Session, client: httpx.Client | None = None) -> dict:

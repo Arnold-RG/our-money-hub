@@ -84,7 +84,7 @@ def post(db: Session, *, workspace_id: str, entry_date: date, memo: str, status:
 
 
 def reverse(db: Session, entry: JournalEntry, *, entry_date: date, user_id: str | None, memo: str) -> JournalEntry:
-    lines = [Line(l.ledger_account_id, l.currency, debit=l.credit_minor, credit=l.debit_minor) for l in entry.lines]
+    lines = [Line(ln.ledger_account_id, ln.currency, debit=ln.credit_minor, credit=ln.debit_minor) for ln in entry.lines]
     return post(db, workspace_id=entry.workspace_id, entry_date=entry_date, memo=memo, status=entry.status,
                 lines=lines, user_id=user_id, reverses_entry_id=entry.id)
 

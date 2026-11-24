@@ -1,4 +1,4 @@
-from conftest import add_rate, cat_id, register
+from conftest import cat_id, register
 
 from app.modules.ledger.service import Line, LedgerError, validate_lines
 import pytest

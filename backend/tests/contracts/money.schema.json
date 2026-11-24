@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arnova.group/ecosystem/schemas/money.schema.json",
+  "title": "MoneyWire \u2014 decimal string + ISO 4217 (RWF 0 minor units); 'minor' optional",
+  "type": "object",
+  "required": [
+    "amount",
+    "currency"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "amount": {
+      "type": "string",
+      "pattern": "^-?\\d{1,15}(\\.\\d{1,2})?$"
+    },
+    "currency": {
+      "enum": [
+        "PLN",
+        "RWF",
+        "EUR",
+        "USD"
+      ]
+    },
+    "minor": {
+      "type": [
+        "integer",
+        "string"
+      ],
+      "description": "optional, OMH adds integer minor units"
+    }
+  }
+}

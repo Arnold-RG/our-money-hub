@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arnova.group/ecosystem/schemas/budget-reservation-response.schema.json",
+  "title": "Reservation — 201 body of POST /api/v1/budget-reservations (OMH reservation_view). 409 {detail} = denied.",
+  "type": "object",
+  "required": ["reservation_id", "status", "amount"],
+  "properties": {
+    "reservation_id": {"type": "string", "minLength": 1},
+    "id": {"type": "string"},
+    "status": {"enum": ["active", "settled", "released"]},
+    "amount": {"$ref": "money.schema.json"},
+    "budget_id": {"type": ["string", "null"]},
+    "agent_id": {"type": ["string", "null"]},
+    "external_ref": {"type": ["string", "null"]},
+    "purpose": {"type": ["string", "null"]},
+    "period": {"type": "string"},
+    "created_at": {"type": "string"},
+    "settled_usage_id": {"type": ["string", "null"]}
+  }
+}

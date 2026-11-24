@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal
 
 # ISO 4217 minor-unit exponents for supported currencies.
 CURRENCIES: dict[str, int] = {"PLN": 2, "EUR": 2, "USD": 2, "RWF": 0}

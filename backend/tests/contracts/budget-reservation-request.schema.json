@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arnova.group/ecosystem/schemas/budget-reservation-request.schema.json",
+  "title": "ReservationRequest — body of POST /api/v1/budget-reservations (service caller). Matches OMH ServiceReserveIn.",
+  "type": "object",
+  "required": ["agent_id", "run_id", "provider", "estimated_cost", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 60},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 120, "description": "Idempotency key"},
+    "project_id": {"type": ["string", "null"], "maxLength": 120},
+    "provider": {"enum": ["openai", "xai", "anthropic", "google", "other"]},
+    "estimated_cost": {"$ref": "money.schema.json"},
+    "source": {"const": "ragi"}
+  }
+}

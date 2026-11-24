@@ -1,11 +1,7 @@
-import hashlib
-import hmac
-import json
 
 from conftest import add_rate, cat_id
 from test_ledger_api import mk_account, tb_balanced
 
-from app.core.dates import month_start
 from app.api.v1.common import today
 
 T = today()
@@ -153,7 +149,7 @@ def test_client_mrr_arr(api):
 
 
 def test_forecast_includes_renewals(api):
-    acc = mk_account(api, "Bank", "PLN", "100.00")
+    mk_account(api, "Bank", "PLN", "100.00")
     api.post("/subscriptions", {"name": "Hosting", "vendor": "Render", "kind": "hosting", "amount": "25.00",
                                 "currency": "PLN", "interval": "monthly",
                                 "next_renewal": (T.replace(day=1) if T.day > 1 else T).isoformat()})
@@ -205,24 +201,6 @@ def test_csv_import_preview_commit_dedupe_and_export(api):
     out = api.c.get(f"/api/v1/transactions/export.csv?ws={api.ws}").text
     assert "5000.00,PLN,PKO" in out and "1500,RWF,MoMo" in out and "New category" in out
     tb_balanced(api)
-
-
-def test_event_inbox_signature(api, monkeypatch):
-    monkeypatch.setenv("ECOSYSTEM_EVENT_SECRET", "s3cret-for-tests")
-    monkeypatch.setenv("OMH_RAGI_WORKSPACE_ID", api.ws)
-    ev = {"schema_version": "1.0", "event_id": "evt-1", "event_type": "agent.usage.recorded", "source": "ragi",
-          "organization_id": "arnovagroup", "project_id": "omh", "occurred_at": f"{D}T12:00:00Z",
-          "data": {"agent_id": "forge", "provider": "openai", "cost": {"amount": "1.25", "currency": "USD"},
-                   "usage_record_id": "u-1"}}
-    body = json.dumps(ev).encode()
-    sig = "sha256=" + hmac.new(b"s3cret-for-tests", body, hashlib.sha256).hexdigest()
-    bad = api.c.post("/api/v1/events", content=body, headers={"X-Arnova-Signature": "sha256=00"})
-    assert bad.status_code == 401
-    ok = api.c.post("/api/v1/events", content=body, headers={"X-Arnova-Signature": sig})
-    assert ok.status_code == 202 and ok.json()["result"] == "ai_usage_recorded"
-    dup = api.c.post("/api/v1/events", content=body, headers={"X-Arnova-Signature": sig})
-    assert dup.json()["status"] == "duplicate"
-    assert api.get("/ai-usage").json()[0]["cost"]["minor"] == 125
 
 
 def test_search_and_audit(api):

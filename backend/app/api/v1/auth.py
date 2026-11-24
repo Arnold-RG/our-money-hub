@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -97,14 +97,23 @@ def demo_enabled() -> bool:
     return s.demo_login_enabled and s.app_env == "development"
 
 
+def registration_open(db: Session) -> bool:
+    """Closed by default. The first real (non-demo) account on an empty database becomes the owner."""
+    if get_settings().allow_registration:
+        return True
+    return db.scalar(select(func.count()).select_from(User).where(User.is_demo.is_(False))) == 0
+
+
 @router.get("/config")
-def auth_config():
-    return {"demo_login": demo_enabled(), "mfa": "totp"}
+def auth_config(db: Session = Depends(get_db)):
+    return {"demo_login": demo_enabled(), "mfa": "totp", "registration_open": registration_open(db)}
 
 
 @router.post("/register")
 def register(body: RegisterIn, resp: Response, request: Request, db: Session = Depends(get_db)):
     throttle.check(f"reg:{_ip(request)}")
+    if not registration_open(db):
+        raise HTTPException(403, "Registration is closed. Ask the owner for access.")
     email = body.email.lower()
     if email.endswith("@" + DEMO_DOMAIN) or db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "An account with this email already exists")

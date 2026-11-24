@@ -4,11 +4,8 @@ from __future__ import annotations
 import datetime as dt
 from datetime import date
 
-import hashlib
-import hmac
-
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,6 +13,7 @@ from app.api.v1.common import money_out, parse_money, today
 from app.core.config import get_settings
 from app.core.money import Money
 from app.core.permissions import WorkspaceContext, current_user, read_ws, write_ws
+from app.core.service_auth import ServiceAuthError, is_service_call, verify
 from app.modules.currencies.service import Converter
 from app.database.models import (AIUsageRecord, Budget, BudgetReservation, FinancialAccount, SavingsGoal, Subscription,
                                  TransactionCategory)
@@ -122,7 +120,8 @@ def delete_budget(bid: str, ctx: WorkspaceContext = Depends(write_ws), db: Sessi
 # ---------- reservations ----------
 # Two callers share these paths (contract: ecosystem-contracts/COORDINATION.md "Budget reservations"):
 #  * the owner's browser session (cookie + X-Workspace-Id), body ReserveIn / SettleIn;
-#  * RAGI, with ``Authorization: Bearer <ECOSYSTEM_SERVICE_TOKEN>``, body ServiceReserveIn / ServiceSettleIn,
+#  * RAGI, signed with its own rotating HMAC key (X-Arnova-Key-Id / -Timestamp / -Signature, scope budget:reserve),
+#    body ServiceReserveIn = ecosystem-contracts/schemas/budget-reservation-request.schema.json (ONE schema),
 #    always against OMH_RAGI_WORKSPACE_ID and always fail-closed (hard limit enforced).
 class MoneyIn(BaseModel):
     amount: str = Field(max_length=32)
@@ -138,12 +137,18 @@ class ReserveIn(BaseModel):
 
 
 class ServiceReserveIn(BaseModel):
+    """RAGI → OMH body: ecosystem-contracts/schemas/budget-reservation-request.schema.json."""
+
+    model_config = ConfigDict(extra="forbid")
     agent_id: str = Field(min_length=1, max_length=60)
     run_id: str = Field(min_length=1, max_length=120)
     project_id: str | None = Field(default=None, max_length=120)
     provider: str = "other"
     estimated_cost: MoneyIn
     source: str = "ragi"
+
+
+SERVICE_PROVIDERS = AI_PROVIDERS
 
 
 class SettleIn(BaseModel):
@@ -162,40 +167,46 @@ def reservation_view(r: BudgetReservation) -> dict:
 
 
 class _Caller:
-    def __init__(self, workspace_id: str, user_id: str | None, service: bool):
-        self.workspace_id, self.user_id, self.service = workspace_id, user_id, service
+    def __init__(self, workspace_id: str, user_id: str | None, service: bool, service_name: str | None = None):
+        self.workspace_id, self.user_id, self.service, self.service_name = workspace_id, user_id, service, service_name
 
 
-def _service_token_ok(request: Request) -> bool | None:
-    """None = no bearer service call; True/False = service call with valid/invalid token."""
-    auth = request.headers.get("authorization", "")
-    if not auth.lower().startswith("bearer ") or request.cookies.get("omh_session"):
-        return None
-    configured = get_settings().ecosystem_service_token
-    presented = auth[7:].strip()
-    if not configured:
-        return False
-    return hmac.compare_digest(hashlib.sha256(presented.encode()).digest(), hashlib.sha256(configured.encode()).digest())
-
-
-def _caller(request: Request, db: Session, min_role: str) -> _Caller:
-    ok = _service_token_ok(request)
-    if ok is True:
+def _caller(request: Request, db: Session, min_role: str, body: bytes = b"") -> _Caller:
+    """A signed service call (X-Arnova-* headers) or a signed-in user. Never both, never a static bearer."""
+    if is_service_call(request.headers):
+        try:
+            key = verify(request.headers, body, scope="budget:reserve")
+        except ServiceAuthError as e:
+            raise HTTPException(e.status, str(e)) from e
+        if key.service != "ragi":
+            raise HTTPException(403, "Only RAGI may reserve AI budget")
         ws = get_settings().omh_ragi_workspace_id
         if not ws:
             raise HTTPException(503, "OMH_RAGI_WORKSPACE_ID is not configured")
-        return _Caller(ws, None, True)
-    if ok is False:
-        from app.core.security import load_session
-
-        # Might still be a user bearer session token.
-        if not load_session(db, request.headers["authorization"][7:].strip()):
-            raise HTTPException(401, "Invalid service token")
+        return _Caller(ws, None, True, key.service)
     user = current_user(request, db)
     from app.core.permissions import WorkspaceAccess
 
     ctx = WorkspaceAccess(min_role)(request.headers.get("x-workspace-id"), request.query_params.get("ws"), user, db)
     return _Caller(ctx.workspace_id, user.id, False)
+
+
+def _json(raw: bytes):
+    import json
+
+    try:
+        return json.loads(raw or b"{}")
+    except ValueError as e:
+        raise HTTPException(422, "Body must be JSON") from e
+
+
+def _service_body(raw, service: str) -> ServiceReserveIn:
+    if not isinstance(raw, dict):
+        raise HTTPException(422, "Body must be a JSON object")
+    body = ServiceReserveIn.model_validate(raw)
+    if body.source != service:
+        raise HTTPException(403, "source does not match the signing key")
+    return body
 
 
 def _ai_budget_for(db: Session, ws: str, provider: str) -> Budget | None:
@@ -212,12 +223,13 @@ def list_reservations(ctx: WorkspaceContext = Depends(read_ws), db: Session = De
 
 @router.post("/budget-reservations", status_code=201)
 async def create_reservation(request: Request, db: Session = Depends(get_db)):
-    c = _caller(request, db, "editor")
-    raw = await request.json()
+    raw_bytes = await request.body()
+    c = _caller(request, db, "editor", raw_bytes)
+    raw = _json(raw_bytes)
     try:
         if c.service:
-            body = ServiceReserveIn.model_validate(raw)
-            if body.provider not in AI_PROVIDERS:
+            body = _service_body(raw, c.service_name)
+            if body.provider not in SERVICE_PROVIDERS:
                 raise HTTPException(422, "Unknown AI provider")
             b = _ai_budget_for(db, c.workspace_id, body.provider)
             if not b:
@@ -228,7 +240,7 @@ async def create_reservation(request: Request, db: Session = Depends(get_db)):
                 if conv is None:
                     raise HTTPException(409, f"No current {cur}→{b.currency} rate; reservation refused")
                 est = conv.minor
-            r = budgets.reserve(db, b, amount_minor=est, purpose=f"{body.source} run {body.run_id}", agent_id=body.agent_id,
+            r = budgets.reserve(db, b, amount_minor=est, purpose=f"{body.source} run {body.run_id}"[:255], agent_id=body.agent_id,
                                 external_ref=body.run_id, on=today(), user_id=None, enforce=True)
         else:
             body = ReserveIn.model_validate(raw)
@@ -267,14 +279,16 @@ def _reservation(db: Session, ws: str, rid: str) -> tuple[BudgetReservation, Bud
 @router.post("/budget-reservations/{rid}/settle")
 async def settle_reservation(rid: str, request: Request, db: Session = Depends(get_db)):
     """Actual charges replace the reserved estimate (master spec §08)."""
-    c = _caller(request, db, "editor")
+    raw_bytes = await request.body()
+    c = _caller(request, db, "editor", raw_bytes)
     try:
-        body = SettleIn.model_validate(await request.json())
+        body = SettleIn.model_validate(_json(raw_bytes))
     except ValidationError as e:
         raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
     r, b = _reservation(db, c.workspace_id, rid)
-    if body.provider not in AI_PROVIDERS:
+    if body.provider not in SERVICE_PROVIDERS:
         raise HTTPException(422, "Unknown AI provider")
+    provider = body.provider
     if isinstance(body.actual_cost, MoneyIn):
         cost, cur = parse_money(body.actual_cost.amount, body.actual_cost.currency, "actual_cost")
     else:
@@ -283,7 +297,7 @@ async def settle_reservation(rid: str, request: Request, db: Session = Depends(g
         raise HTTPException(422, "Cost cannot be negative")
     if r.status != "active":
         raise HTTPException(409, f"Reservation is already {r.status}")
-    u = AIUsageRecord(workspace_id=c.workspace_id, provider=body.provider, model=body.model, agent_id=r.agent_id,
+    u = AIUsageRecord(workspace_id=c.workspace_id, provider=provider, model=body.model, agent_id=r.agent_id,
                       input_tokens=body.input_tokens, output_tokens=body.output_tokens, cost_minor=cost,
                       currency=cur, occurred_on=today(), source="reservation", external_ref=r.id)
     db.add(u)
@@ -296,8 +310,8 @@ async def settle_reservation(rid: str, request: Request, db: Session = Depends(g
 
 
 @router.post("/budget-reservations/{rid}/release")
-def release_reservation(rid: str, request: Request, db: Session = Depends(get_db)):
-    c = _caller(request, db, "editor")
+async def release_reservation(rid: str, request: Request, db: Session = Depends(get_db)):
+    c = _caller(request, db, "editor", await request.body())
     r, b = _reservation(db, c.workspace_id, rid)
     try:
         budgets.resolve(db, r, "released", None, c.user_id)

@@ -5,6 +5,7 @@ _tmp = tempfile.mkdtemp(prefix="omh-test-")
 os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_tmp}/test.sqlite3"))
 os.environ.setdefault("OMH_SECRET_KEY", "test-only-secret-not-used-anywhere-else")
 os.environ["APP_ENV"] = "test"
+os.environ.setdefault("ALLOW_REGISTRATION", "true")  # tests create many users; the closed default has its own test
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

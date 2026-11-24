@@ -1,22 +1,22 @@
 """Reports, exchange rates, global search, audit log, events (outbox + signed inbox)."""
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import os
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.common import today
 from app.core.dates import parse_month
 from app.core.money import CURRENCIES, CURRENCY_NAMES, MoneyError, normalize_currency, parse_amount
-from app.core.permissions import WorkspaceContext, current_user, read_ws, write_ws
+from app.core.config import get_settings
+from app.core.permissions import WorkspaceContext, read_ws, write_ws
+from app.core.service_auth import ServiceAuthError, verify
 from app.database.models import (AIUsageRecord, AuditLog, Budget, EventInbox, EventOutbox, FinancialAccount,
                                  Subscription, Transaction, User)
 from app.database.session import get_db
@@ -187,49 +187,93 @@ def outbox(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depends(get_d
             for e in rows]
 
 
+class EventEnvelope(BaseModel):
+    """Master spec §10 envelope (ecosystem-contracts/schemas/event.schema.json)."""
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: str = Field(pattern=r"^1\.0$")
+    event_id: str = Field(min_length=8, max_length=64)
+    event_type: str = Field(pattern=r"^[a-z]+(\.[a-z_]+)+$", max_length=80)
+    source: str
+    organization_id: str = Field(max_length=80)
+    project_id: str | None = Field(default=None, max_length=120)
+    occurred_at: datetime
+    data: dict
+
+
+EVENT_SOURCES = {"ragi", "omh", "github", "monitoring", "arnovagroup", "movies"}
+
+
 @router.post("/events", status_code=202)
 async def receive_event(request: Request, db: Session = Depends(get_db)):
-    """Signed inbox for RAGI → OMH events (ecosystem-contracts/COORDINATION.md).
-
-    Header ``X-Arnova-Signature: sha256=<hex>`` = HMAC-SHA256(ECOSYSTEM_EVENT_SECRET, raw body).
-    Only ``agent.usage.recorded`` is applied (as an AI usage record) and only when OMH_RAGI_WORKSPACE_ID is set.
+    """Signed inbox (ecosystem-contracts/docs/authentication.md §2, §4). Scope ``events:write``;
+    the envelope ``source`` must equal the signing key's service. Duplicates (same event_id, or the same
+    usage record under a new event_id) are acknowledged and ignored. Only ``agent.usage.recorded`` is applied.
     """
-    secret = os.environ.get("ECOSYSTEM_EVENT_SECRET")
-    if not secret:
-        raise HTTPException(503, "Event inbox is not configured")
     body = await request.body()
-    sig = request.headers.get("x-arnova-signature", "")
-    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, expected):
-        raise HTTPException(401, "Bad signature")
     try:
-        ev = json.loads(body)
-        event_id, event_type = str(ev["event_id"]), str(ev["event_type"])
-    except (ValueError, KeyError) as e:
-        raise HTTPException(422, "Malformed event") from e
-    if ev.get("schema_version") != "1.0":
-        raise HTTPException(422, "Unsupported schema_version")
-    if db.get(EventInbox, event_id):
-        return {"status": "duplicate", "event_id": event_id}
-    row = EventInbox(event_id=event_id, event_type=event_type, source=str(ev.get("source", "?"))[:40], payload=ev)
+        key = verify(request.headers, body, scope="events:write")
+    except ServiceAuthError as e:
+        raise HTTPException(e.status, str(e)) from e
+    try:
+        ev = EventEnvelope.model_validate_json(body)
+    except ValidationError as e:
+        raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
+    if ev.source not in EVENT_SOURCES:
+        raise HTTPException(422, "Unknown event source")
+    if ev.source != key.service:
+        raise HTTPException(403, "Envelope source does not match the signing key")
+    if db.get(EventInbox, ev.event_id):
+        return {"status": "duplicate", "event_id": ev.event_id}
+    payload = json.loads(body)
+    row = EventInbox(event_id=ev.event_id, event_type=ev.event_type, source=ev.source, payload=payload)
     db.add(row)
-    ws = os.environ.get("OMH_RAGI_WORKSPACE_ID")
-    if event_type == "agent.usage.recorded" and ws:
-        d = ev.get("data", {})
+    ws = get_settings().omh_ragi_workspace_id
+    if ev.event_type == "agent.usage.recorded" and ws and ev.source == "ragi":
+        d = ev.data
         cost = d.get("cost") or {}
         try:
             cur = normalize_currency(cost["currency"])
             minor = parse_amount(str(cost["amount"]), cur)
+            if minor < 0:
+                raise ValueError("negative cost")
             db.add(AIUsageRecord(workspace_id=ws, provider=str(d.get("provider", "other"))[:40],
-                                 model=d.get("model"), agent_id=d.get("agent_id"), project=ev.get("project_id"),
+                                 model=d.get("model"), agent_id=d.get("agent_id"), project=ev.project_id,
                                  input_tokens=int(d.get("input_tokens", 0)), output_tokens=int(d.get("output_tokens", 0)),
-                                 cost_minor=minor, currency=cur,
-                                 occurred_on=date.fromisoformat(str(ev["occurred_at"])[:10]), source="ragi",
-                                 external_ref=str(d.get("usage_record_id") or event_id)[:120]))
+                                 cost_minor=minor, currency=cur, occurred_on=ev.occurred_at.date(), source="ragi",
+                                 external_ref=str(d.get("usage_record_id") or ev.event_id)[:120]))
             row.processed, row.result = True, "ai_usage_recorded"
-        except (KeyError, ValueError, MoneyError) as e:
+        except (KeyError, ValueError, TypeError, MoneyError) as e:
             row.result = f"not applied: {e}"[:255]
     else:
         row.result = "stored"
-    db.commit()
-    return {"status": "accepted", "event_id": event_id, "result": row.result}
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # The usage record already exists under another event_id: remember the event, do not double count.
+        db.add(EventInbox(event_id=ev.event_id, event_type=ev.event_type, source=ev.source, payload=payload,
+                          processed=False, result="duplicate usage record"))
+        db.commit()
+        return {"status": "duplicate", "event_id": ev.event_id}
+    return {"status": "accepted", "event_id": ev.event_id, "result": row.result}
+
+
+@router.get("/finance-summary")
+def finance_summary(request: Request, organization_id: str, db: Session = Depends(get_db)):
+    """Read-only summary for RAGI's dashboard (scope ``finance:read``, signed GET with an empty body).
+
+    Per currency, never summed across currencies, so no exchange rate is needed and nothing is invented.
+    """
+    try:
+        verify(request.headers, b"", scope="finance:read")
+    except ServiceAuthError as e:
+        raise HTTPException(e.status, str(e)) from e
+    s = get_settings()
+    if not s.omh_ragi_workspace_id:
+        raise HTTPException(503, "OMH_RAGI_WORKSPACE_ID is not configured")
+    if organization_id != s.omh_ragi_organization_id:
+        raise HTTPException(404, "Unknown organization_id")
+    return reports.service_summary(db, s.omh_ragi_workspace_id, today())
+
+

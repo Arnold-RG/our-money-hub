@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arnova.group/ecosystem/schemas/finance-summary.schema.json",
+  "title": "OMH finance summary for RAGI (GET /api/v1/finance-summary?organization_id=…)",
+  "description": "Signed GET (empty body), scope finance:read. Per currency; amounts are never added across currencies.",
+  "type": "object",
+  "required": ["source", "schema_version", "as_of", "month", "has_data", "by_currency", "ai_budgets"],
+  "properties": {
+    "source": {"const": "omh"},
+    "schema_version": {"const": "1.0"},
+    "as_of": {"type": "string", "format": "date"},
+    "month": {"type": "string", "pattern": "^\\d{4}-\\d{2}$"},
+    "has_data": {"type": "boolean"},
+    "by_currency": {"type": "object", "propertyNames": {"enum": ["PLN", "RWF", "EUR", "USD"]}},
+    "ai_budgets": {"type": "array"}
+  }
+}

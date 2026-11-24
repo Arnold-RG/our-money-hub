@@ -22,12 +22,19 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     demo_login_enabled: bool = False  # only honoured when app_env == "development"
     default_reporting_currency: str = "PLN"
-    cors_origins: str = "http://localhost:3100,http://127.0.0.1:3100"
+    cors_origins: str = "http://localhost:3420,http://127.0.0.1:3420"
     nbp_api_base: str = "https://api.nbp.pl/api"
     budget_alert_threshold_pct: int = 80
-    # RAGI → OMH service calls (budget reservations). Token is compared as a sha256 hash; never committed.
-    ecosystem_service_token: str = ""
-    omh_ragi_workspace_id: str = ""
+    # Service-to-service auth (ecosystem-contracts/docs/authentication.md): per-service rotating HMAC keys
+    # in a keyring file OUTSIDE the repo. Nothing secret lives in code or in this file.
+    ecosystem_keyring_file: str = ""
+    ecosystem_signing_key_id: str = ""  # OMH's own kid, used when OMH signs outgoing events
+    ecosystem_max_clock_skew_seconds: int = 300
+    omh_ragi_workspace_id: str = ""  # workspace that RAGI's org maps to (spec gap #23: owner decision)
+    omh_ragi_organization_id: str = "arnovagroup"
+    # Registration: closed by default. The very first account on an empty database becomes the owner.
+    allow_registration: bool = False
+    rates_auto_sync: bool = False  # refresh official FX rates every 6h while the API runs
     lockout_attempts: int = 5
     lockout_minutes: int = 15
 
@@ -39,6 +46,8 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     s = Settings()
+    if s.app_env not in {"development", "test"} and s.is_sqlite:
+        raise RuntimeError("OMH needs PostgreSQL outside development (set DATABASE_URL)")
     if not s.omh_secret_key:
         if s.app_env not in {"development", "test"}:
             raise RuntimeError("OMH_SECRET_KEY must be set outside development")

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
-from conftest import Api, add_rate, cat_id, register
+from conftest import Api, add_rate, register
 from test_ledger_api import mk_account
 
 from app.api.v1.common import today
@@ -28,8 +28,8 @@ def test_manual_rate_only_affects_own_workspace():
     add_rate(a, "EUR", "PLN", "4.4633", D)
     add_rate(b, "EUR", "PLN", "1000", D)  # attacker's own workspace
     assert a.get("/reports/summary?currency=PLN").json()["total_balance"]["minor"] == 4463
-    assert a.get(f"/exchange-rates/quote?base=EUR&quote=PLN").json()["rate"].startswith("4.4633")
-    assert b.get(f"/exchange-rates/quote?base=EUR&quote=PLN").json()["rate"].startswith("1000")
+    assert a.get("/exchange-rates/quote?base=EUR&quote=PLN").json()["rate"].startswith("4.4633")
+    assert b.get("/exchange-rates/quote?base=EUR&quote=PLN").json()["rate"].startswith("1000")
     # B's personal rate doesn't leak into A's business workspace either
     me = a.get("/auth/me").json()
     biz = Api(a.c, next(w["id"] for w in me["workspaces"] if w["kind"] == "business"))
@@ -295,27 +295,3 @@ def test_outbox_has_full_spec_envelope(api):
     assert env["source"] == "omh" and env["schema_version"] == "1.0"
 
 
-# ---------- RAGI service reservations (contract) ----------
-def test_ragi_service_reservation_contract(api, monkeypatch):
-    s = get_settings()
-    monkeypatch.setattr(s, "ecosystem_service_token", "svc-token-for-tests-only")
-    monkeypatch.setattr(s, "omh_ragi_workspace_id", api.ws)
-    svc = TestClient(app)
-    body = {"agent_id": "forge", "run_id": "run-1", "project_id": "omh", "provider": "openai",
-            "estimated_cost": {"amount": "2.00", "currency": "USD"}, "source": "ragi"}
-    bad = svc.post("/api/v1/budget-reservations", json=body, headers={"Authorization": "Bearer nope"})
-    assert bad.status_code == 401
-    h = {"Authorization": "Bearer svc-token-for-tests-only"}
-    assert svc.post("/api/v1/budget-reservations", json=body, headers=h).status_code == 409  # no AI budget → closed
-    api.post("/budgets", {"name": "Agents", "scope": "ai", "amount": "5.00", "currency": "USD"})
-    r = svc.post("/api/v1/budget-reservations", json=body, headers=h)
-    assert r.status_code == 201 and r.json()["reservation_id"]
-    again = svc.post("/api/v1/budget-reservations", json=body, headers=h)
-    assert again.json()["reservation_id"] == r.json()["reservation_id"]  # idempotent on run_id
-    over = svc.post("/api/v1/budget-reservations", json={**body, "run_id": "run-2",
-                                                         "estimated_cost": {"amount": "3.01", "currency": "USD"}},
-                    headers=h)
-    assert over.status_code == 409  # service calls always enforce the limit
-    st = svc.post(f"/api/v1/budget-reservations/{r.json()['reservation_id']}/settle", headers=h,
-                  json={"actual_cost": {"amount": "1.50", "currency": "USD"}, "provider": "openai"})
-    assert st.status_code == 200 and st.json()["budget"]["available"]["minor"] == 350

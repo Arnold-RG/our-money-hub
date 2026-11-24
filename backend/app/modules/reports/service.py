@@ -311,3 +311,41 @@ def signals(db: Session, ws: str, currency: str, today: date) -> list[dict]:
             out.append({"type": "limit_reached", "severity": "info", "title": f"{r['label']} reached",
                         "detail": r["name"], "ids": [r["account_id"]]})
     return out
+
+
+class _SameCurrency:
+    """A 'converter' that only passes amounts already in `to` (used for per-currency totals, no FX)."""
+
+    def __init__(self, to: str):
+        self.to = to
+        self.missing: set[str] = set()
+        self.stale: set[str] = set()
+
+    def __call__(self, money: Money, on: date | None = None) -> Money | None:
+        return money if money.currency == self.to else None
+
+
+def service_summary(db: Session, ws: str, today: date) -> dict:
+    """RAGI-facing summary (ecosystem-contracts finance-summary): per currency, never summed across currencies."""
+    from app.core.money import CURRENCIES
+
+    start, end = month_start(today), month_end(today)
+    per: dict[str, dict] = {}
+    for cur in CURRENCIES:
+        only = _SameCurrency(cur)
+        bal, pend, _ = balances(db, ws, only, today)
+        f = compute_flows(db, ws, start, end, only)
+        ai = ai_usage_total(db, ws, start, end, only)
+        has_accounts = any(a.currency == cur for a in _accounts(db, ws))
+        if not (has_accounts or f.income or f.expense or ai):
+            continue
+        per[cur] = {"balance": m(bal, cur), "pending": m(pend, cur), "income_month": m(f.income, cur),
+                    "expenses_month": m(f.expense, cur), "net_month": m(f.net, cur), "ai_usage_month": m(ai, cur)}
+    ai_budgets = [budget_view(budgets.status(db, b, today))
+                  for b in db.scalars(select(Budget).where(Budget.workspace_id == ws, Budget.scope == "ai"))]
+    return {"source": "omh", "schema_version": "1.0", "as_of": today.isoformat(), "month": start.strftime("%Y-%m"),
+            "has_data": bool(per or ai_budgets), "by_currency": per,
+            "ai_budgets": [{"id": b["id"], "name": b["name"], "provider": b["ai_provider"], "allocated": b["allocated"],
+                            "actual": b["actual"], "reserved": b["reserved"], "available": b["available"],
+                            "state": b["state"]} for b in ai_budgets],
+            "note": "Amounts are per currency and are never added across currencies."}
