@@ -13,6 +13,7 @@ Rules (see docs/FINANCIAL_ENGINE.md):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
@@ -70,25 +71,7 @@ def parse_amount(value: str | int | Decimal, currency: str, *, strict: bool = Tr
     if isinstance(value, Decimal):
         dec = value
     else:
-        text = str(value).strip().replace("\u00a0", "").replace(" ", "")
-        if not text:
-            raise MoneyError("Empty amount")
-        if "," in text and "." in text:
-            # whichever separator appears last is the decimal separator
-            if text.rfind(",") > text.rfind("."):
-                text = text.replace(".", "").replace(",", ".")
-            else:
-                text = text.replace(",", "")
-        elif "," in text:
-            head, _, tail = text.rpartition(",")
-            if text.count(",") > 1 or len(tail) == 3:
-                text = text.replace(",", "")  # thousands separators: 1,234 / 1,234,567
-            else:
-                text = f"{head}.{tail}"  # decimal comma: 12,50
-        try:
-            dec = Decimal(text)
-        except InvalidOperation as exc:
-            raise MoneyError(f"Not a number: {value!r}") from exc
+        dec = Decimal(_normalise_text(str(value), exp))
     if not dec.is_finite():
         raise MoneyError("Amount must be finite")
     quant = Decimal(1).scaleb(-exp)
@@ -96,6 +79,48 @@ def parse_amount(value: str | int | Decimal, currency: str, *, strict: bool = Tr
     if strict and rounded != dec:
         raise PrecisionError(f"{currency} allows {exp} decimal place(s); got {value!r}")
     return int(rounded.scaleb(exp))
+
+
+_ALLOWED = re.compile(r"^-?[0-9][0-9 .,]*$")
+_GROUPED = re.compile(r"^[0-9]{1,3}([ ,.][0-9]{3})+$")
+
+
+def _normalise_text(raw: str, exp: int) -> str:
+    """Strict, unambiguous amount parsing: ASCII digits, optional leading minus, one decimal separator.
+
+    Accepted: 12.50  12,50  1 234,56  1,234.56  1.234,56  1,500,000 (RWF)  -0.01
+    Rejected: 1e3, 1_000, +5, Arabic-Indic digits, and ambiguous '12,345' / '12.345' for 2-decimal currencies.
+    """
+    text = raw.strip().replace("\u00a0", " ").replace("\u202f", " ")
+    if not text or not _ALLOWED.match(text):
+        raise MoneyError(f"Not a valid amount: {raw!r}")
+    sign = ""
+    if text.startswith("-"):
+        sign, text = "-", text[1:]
+    last_c, last_d = text.rfind(","), text.rfind(".")
+    sep_pos = max(last_c, last_d)
+    if sep_pos == -1:
+        int_part, frac = text, ""
+    else:
+        int_part, frac = text[:sep_pos], text[sep_pos + 1:]
+        other = "." if text[sep_pos] == "," else ","
+        mixed = other in int_part
+        if " " in frac or not frac:
+            raise MoneyError(f"Not a valid amount: {raw!r}")
+        if len(frac) == 3 and not mixed and (text.count(text[sep_pos]) > 1 or exp == 0):
+            int_part, frac = text, ""  # 1,234,567 or RWF 1,234 → thousands grouping
+        elif len(frac) == 3 and not mixed and exp > 0 and re.match(r"^[1-9][0-9]{0,2}$", int_part):
+            raise MoneyError(f"Ambiguous amount {raw!r}: write 12345 for thousands, or 12.35 for a decimal")
+        elif text.count(text[sep_pos]) > 1:
+            raise MoneyError(f"Not a valid amount: {raw!r}")
+    digits = int_part.replace(" ", "")
+    if int_part and (" " in int_part or "," in int_part or "." in int_part):
+        if not _GROUPED.match(int_part):
+            raise MoneyError(f"Thousands groups must have 3 digits: {raw!r}")
+        digits = re.sub(r"[ ,.]", "", int_part)
+    if not digits.isdigit() or (frac and not frac.isdigit()):
+        raise MoneyError(f"Not a valid amount: {raw!r}")
+    return f"{sign}{digits}.{frac}" if frac else f"{sign}{digits}"
 
 
 def to_decimal(minor: int, currency: str) -> Decimal:

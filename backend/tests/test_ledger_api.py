@@ -146,10 +146,13 @@ def test_login_and_wrong_password():
                   headers=h).status_code == 200
 
 
-def test_demo_login_is_empty():
+def test_demo_login_is_empty(monkeypatch):
     from fastapi.testclient import TestClient
+    from app.core.config import get_settings
     from app.main import app
 
+    monkeypatch.setattr(get_settings(), "demo_login_enabled", True)
+    monkeypatch.setattr(get_settings(), "app_env", "development")
     c = TestClient(app)
     me = c.post("/api/v1/auth/demo", headers={"X-OMH-Client": "web"}).json()
     ws = me["workspaces"][0]["id"]

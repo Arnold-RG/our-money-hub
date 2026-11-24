@@ -44,6 +44,7 @@ class NewTxn:
     subscription_id: str | None = None
     source: str = "manual"
     import_hash: str | None = None
+    idempotency_key: str | None = None
 
 
 def get_account(db: Session, ws: str, account_id: str) -> FinancialAccount:
@@ -122,7 +123,7 @@ def create(db: Session, ws: str, data: NewTxn, user_id: str | None) -> Transacti
                       to_account_id=data.to_account_id if data.kind == "transfer" else None,
                       to_amount_minor=to_amount, category_id=cat_id, project=data.project,
                       subscription_id=data.subscription_id, journal_entry_id=entry.id,
-                      source=data.source, import_hash=data.import_hash)
+                      source=data.source, import_hash=data.import_hash, idempotency_key=data.idempotency_key)
     db.add(txn)
     db.flush()
     audit(db, workspace_id=ws, user_id=user_id, action="transaction.created", entity="transaction", entity_id=txn.id,

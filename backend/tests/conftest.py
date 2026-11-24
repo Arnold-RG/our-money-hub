@@ -18,9 +18,10 @@ from app.main import app  # noqa: E402
 def fresh_db():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    from app.api.v1 import auth
+    from app.api.v1 import auth, insight
 
-    auth._attempts.clear()
+    auth.throttle.clear()
+    insight._last_sync["at"] = 0.0
     yield
 
 

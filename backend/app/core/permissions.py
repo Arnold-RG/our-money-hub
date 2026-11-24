@@ -4,7 +4,7 @@ from fastapi import Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import COOKIE_NAME, decode_token
+from app.core.security import COOKIE_NAME, load_session
 from app.database.models import User, WorkspaceMember
 from app.database.session import get_db
 
@@ -16,8 +16,8 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     auth = request.headers.get("authorization", "")
     if not token and auth.lower().startswith("bearer "):
         token = auth[7:]
-    user_id = decode_token(token) if token else None
-    user = db.get(User, user_id) if user_id else None
+    sess = load_session(db, token)
+    user = db.get(User, sess.user_id) if sess else None
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     return user

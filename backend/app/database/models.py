@@ -45,7 +45,25 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     reporting_currency: Mapped[str] = mapped_column(String(3), default="PLN")
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mfa_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-encrypted TOTP secret
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    mfa_last_counter: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # replay guard
     memberships: Mapped[list[WorkspaceMember]] = relationship(back_populates="user")
+
+
+class UserSession(Base):
+    """Opaque, revocable session. Only the sha256 of the token is stored."""
+
+    __tablename__ = "user_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mfa_pending: Mapped[bool] = mapped_column(Boolean, default=False)
+    mfa_failures: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class FinancialWorkspace(TimestampMixin, Base):
@@ -74,6 +92,9 @@ class ExchangeRate(Base):
 
     __tablename__ = "exchange_rates"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    # NULL = official reference rate (NBP/ECB/BNR, read-only). Manual rates belong to one workspace only.
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"),
+                                                     nullable=True, index=True)
     base: Mapped[str] = mapped_column(String(3))
     quote: Mapped[str] = mapped_column(String(3))
     rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
@@ -86,7 +107,9 @@ class ExchangeRate(Base):
     priority: Mapped[int] = mapped_column(Integer, default=5)  # lower wins on the same effective date
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     __table_args__ = (
-        UniqueConstraint("base", "quote", "effective_date", "source", "rate_type", name="uq_rate"),
+        UniqueConstraint("workspace_id", "base", "quote", "effective_date", "source", "rate_type", name="uq_rate"),
+        CheckConstraint("rate > 0", name="ck_rate_positive"),
+        CheckConstraint("rate_type in ('mid','bid','ask')", name="ck_rate_type"),
         Index("ix_rate_lookup", "base", "quote", "effective_date"),
     )
 
@@ -94,7 +117,7 @@ class ExchangeRate(Base):
 class FinancialAccount(TimestampMixin, Base):
     __tablename__ = "financial_accounts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     # bank | cash | card | savings | credit | investment | mobile_money (MTN MoMo, Airtel Money)
     # | ikimina (group savings / tontine / VSLA) | ejo_heza | ppk | ike | ikze
@@ -104,12 +127,13 @@ class FinancialAccount(TimestampMixin, Base):
     color: Mapped[str | None] = mapped_column(String(16), nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     ledger_account_id: Mapped[str] = mapped_column(ForeignKey("ledger_accounts.id"))
+    __table_args__ = (CheckConstraint("currency in ('PLN','RWF','EUR','USD')", name="ck_acct_currency"),)
 
 
 class LedgerAccount(Base):
     __tablename__ = "ledger_accounts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="RESTRICT"), index=True)
     code: Mapped[str] = mapped_column(String(60))
     name: Mapped[str] = mapped_column(String(160))
     type: Mapped[str] = mapped_column(String(12))  # asset | liability | equity | income | expense
@@ -132,19 +156,21 @@ class TransactionCategory(Base):
 class JournalEntry(TimestampMixin, Base):
     __tablename__ = "journal_entries"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"), index=True)
+    # RESTRICT: posted history can never disappear with its workspace (archive instead).
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="RESTRICT"), index=True)
     entry_date: Mapped[date] = mapped_column(Date)
     memo: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(12))  # confirmed | pending
     reverses_entry_id: Mapped[str | None] = mapped_column(ForeignKey("journal_entries.id"), nullable=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    lines: Mapped[list[JournalEntryLine]] = relationship(back_populates="entry", cascade="all, delete-orphan")
+    lines: Mapped[list[JournalEntryLine]] = relationship(back_populates="entry", cascade="save-update, merge")
+    __table_args__ = (CheckConstraint("status in ('confirmed','pending')", name="ck_entry_status"),)
 
 
 class JournalEntryLine(Base):
     __tablename__ = "journal_entry_lines"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    entry_id: Mapped[str] = mapped_column(ForeignKey("journal_entries.id", ondelete="CASCADE"), index=True)
+    entry_id: Mapped[str] = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"), index=True)
     ledger_account_id: Mapped[str] = mapped_column(ForeignKey("ledger_accounts.id"), index=True)
     currency: Mapped[str] = mapped_column(String(3))
     debit_minor: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -161,7 +187,7 @@ class Transaction(TimestampMixin, Base):
 
     __tablename__ = "transactions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="RESTRICT"), index=True)
     kind: Mapped[str] = mapped_column(String(12))  # income | expense | transfer | opening | reversal
     status: Mapped[str] = mapped_column(String(12))  # confirmed | pending
     txn_date: Mapped[date] = mapped_column(Date, index=True)
@@ -169,18 +195,26 @@ class Transaction(TimestampMixin, Base):
     payee: Mapped[str | None] = mapped_column(String(160), nullable=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger)  # always positive, in currency
     currency: Mapped[str] = mapped_column(String(3))
-    account_id: Mapped[str] = mapped_column(ForeignKey("financial_accounts.id"), index=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("financial_accounts.id", ondelete="RESTRICT"), index=True)
     to_account_id: Mapped[str | None] = mapped_column(ForeignKey("financial_accounts.id"), nullable=True)
     to_amount_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # cross-currency transfers
     category_id: Mapped[str | None] = mapped_column(ForeignKey("transaction_categories.id"), nullable=True)
     subscription_id: Mapped[str | None] = mapped_column(ForeignKey("subscriptions.id"), nullable=True)
     project: Mapped[str | None] = mapped_column(String(120), nullable=True)
     journal_entry_id: Mapped[str] = mapped_column(ForeignKey("journal_entries.id"))
-    reversal_of_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
+    reversal_of_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"), nullable=True, unique=True)
     reversed_by_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
     import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(20), default="manual")  # manual | csv | subscription | ai_usage
-    __table_args__ = (CheckConstraint("amount_minor > 0", name="ck_txn_positive"),)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="ck_txn_positive"),
+        CheckConstraint("kind in ('income','expense','transfer','opening','reversal')", name="ck_txn_kind"),
+        CheckConstraint("status in ('confirmed','pending')", name="ck_txn_status"),
+        CheckConstraint("currency in ('PLN','RWF','EUR','USD')", name="ck_txn_currency"),
+        UniqueConstraint("workspace_id", "import_hash", name="uq_txn_import_hash"),
+        UniqueConstraint("workspace_id", "idempotency_key", name="uq_txn_idempotency"),
+    )
 
 
 class Budget(TimestampMixin, Base):
@@ -212,6 +246,11 @@ class BudgetReservation(TimestampMixin, Base):
     period_start: Mapped[date] = mapped_column(Date)
     settled_usage_id: Mapped[str | None] = mapped_column(ForeignKey("ai_usage_records.id"), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("budget_id", "external_ref", name="uq_reservation_ref"),
+        CheckConstraint("amount_minor > 0", name="ck_reservation_positive"),
+        CheckConstraint("status in ('active','settled','released')", name="ck_reservation_status"),
+    )
 
 
 class Subscription(TimestampMixin, Base):
@@ -226,6 +265,7 @@ class Subscription(TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(3))
     interval: Mapped[str] = mapped_column(String(10))  # weekly | monthly | quarterly | yearly
     next_renewal: Mapped[date | None] = mapped_column(Date, nullable=True)
+    anchor_day: Mapped[int | None] = mapped_column(Integer, nullable=True)  # billing day kept across short months
     status: Mapped[str] = mapped_column(String(12), default="active")  # active | trial | paused | cancelled
     account_id: Mapped[str | None] = mapped_column(ForeignKey("financial_accounts.id"), nullable=True)
     category_id: Mapped[str | None] = mapped_column(ForeignKey("transaction_categories.id"), nullable=True)

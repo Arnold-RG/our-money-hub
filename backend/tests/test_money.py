@@ -15,10 +15,22 @@ def test_parse_amount(text, cur, minor):
     assert parse_amount(text, cur) == minor
 
 
-@pytest.mark.parametrize("text,cur", [("10.5", "RWF"), ("1.005", "PLN"), ("0.001", "USD")])
+@pytest.mark.parametrize("text,cur", [("10.5", "RWF"), ("0.001", "USD"), ("1.2345", "PLN")])
 def test_parse_rejects_extra_precision(text, cur):
     with pytest.raises(PrecisionError):
         parse_amount(text, cur)
+
+
+@pytest.mark.parametrize("text,cur", [("12,345", "PLN"), ("1.005", "PLN"), ("1e3", "PLN"), ("1_000", "PLN"),
+                                      ("+5", "PLN"), ("\u0661\u0662", "PLN"), ("12,34,567", "RWF"), ("1,2,3", "EUR"),
+                                      ("", "PLN"), ("NaN", "USD"), ("Infinity", "USD"), ("12.", "PLN")])
+def test_parse_rejects_ambiguous_or_non_ascii(text, cur):
+    with pytest.raises(MoneyError):
+        parse_amount(text, cur)
+
+
+def test_rwf_comma_is_thousands():
+    assert parse_amount("1,234", "RWF") == 1234 and parse_amount("1 000 000", "RWF") == 1_000_000
 
 
 def test_float_classic_trap_is_exact():

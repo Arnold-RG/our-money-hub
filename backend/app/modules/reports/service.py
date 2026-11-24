@@ -59,21 +59,29 @@ def balances(db: Session, ws: str, conv: Converter, on: date) -> tuple[int, int,
 
 
 def subscription_totals(db: Session, ws: str, conv: Converter, on: date) -> dict:
-    out = defaultdict(int)
+    """Monthly totals summed from EXACT annualised amounts and rounded once per total (no 8.33×12 drift).
+
+    Each plan's annual amount (exact, e.g. 20 × 12 or 100 × 1) is converted, summed, then ÷12 and rounded once.
+    ARR is the exact annual sum (rounded once), not MRR×12.
+    """
+    annual = defaultdict(Decimal)
     for s in db.scalars(select(Subscription).where(Subscription.workspace_id == ws)):
         if not subs.is_live(s):
             continue
-        mo = conv(subs.monthly(s), on)
-        if mo is None:
+        yearly = Money(s.amount_minor, s.currency).multiply(subs.PER_YEAR[s.interval])  # exact: integer multiples
+        if s.interval == "weekly":
+            yearly = Money(s.amount_minor * 52, s.currency)
+        conv_y = conv(yearly, on)
+        if conv_y is None:
             continue
-        if s.direction == "incoming":
-            out["mrr"] += mo.minor
-        else:
-            out["outgoing"] += mo.minor
-            if s.kind in subs.AI_KINDS:
-                out["ai"] += mo.minor
-            if s.kind in subs.INFRA_KINDS:
-                out["infra"] += mo.minor
+        keys = ["mrr"] if s.direction == "incoming" else ["outgoing"] + (["ai"] if s.kind in subs.AI_KINDS else []) + (
+            ["infra"] if s.kind in subs.INFRA_KINDS else [])
+        for k in keys:
+            annual[k] += Decimal(conv_y.minor)
+    out = defaultdict(int)
+    for k, v in annual.items():
+        out[k] = int((v / 12).quantize(Decimal(1), rounding="ROUND_HALF_EVEN"))
+        out[k + "_annual"] = int(v)
     return out
 
 
@@ -88,7 +96,7 @@ def ai_usage_total(db: Session, ws: str, start: date, end: date, conv: Converter
 
 
 def summary(db: Session, ws: str, currency: str, month: date, today: date) -> dict:
-    conv = Converter(db, currency)
+    conv = Converter(db, currency, ws)
     start, end = month_start(month), month_end(month)
     total, pending, acc_rows = balances(db, ws, conv, today)
     f = compute_flows(db, ws, start, end, conv)
@@ -109,7 +117,7 @@ def summary(db: Session, ws: str, currency: str, month: date, today: date) -> di
         if g.account_id and g.account_id in accounts_by_id:
             acc = accounts_by_id[g.account_id]
             bal = account_balances(db, acc)["confirmed"]
-            mc = Converter(db, g.currency)(Money(bal, acc.currency), today)
+            mc = Converter(db, g.currency, ws)(Money(bal, acc.currency), today)
             saved = mc.minor if mc else None
         goals.append({"id": g.id, "name": g.name, "target": m(g.target_minor, g.currency), "saved": m(saved, g.currency),
                       "progress": str((Decimal(saved) / Decimal(g.target_minor)).quantize(Decimal("0.0001")))
@@ -127,10 +135,12 @@ def summary(db: Session, ws: str, currency: str, month: date, today: date) -> di
         "ai_usage_month": m(usage, currency),
         "ai_operating_cost": m(st["ai"] + usage, currency),
         "infrastructure_monthly": m(st["infra"], currency),
-        "client_mrr": m(st["mrr"], currency), "client_arr": m(st["mrr"] * 12, currency),
+        "client_mrr": m(st["mrr"], currency), "client_arr": m(st["mrr_annual"], currency),
+        "subscriptions_annual": m(st["outgoing_annual"], currency),
         "available_budget": m(available, currency) if budget_rows else None,
         "accounts": acc_rows, "budgets": budget_rows, "goals": goals,
         "unconverted": sorted(conv.missing | set(f.unconverted)),
+        "stale_rates": sorted(conv.stale),
         "rates_used": {k: {"rate": str(v.rate), "effective_date": v.effective_date.isoformat() if v.effective_date else None,
                            "source": v.source} for k, v in conv.used.items()},
     }
@@ -147,7 +157,7 @@ def budget_view(bs: budgets.BudgetStatus) -> dict:
 
 
 def cashflow(db: Session, ws: str, currency: str, months: int, today: date) -> dict:
-    conv = Converter(db, currency)
+    conv = Converter(db, currency, ws)
     first = month_start(add_months(today, -(months - 1)))
     f = compute_flows(db, ws, first, month_end(today), conv)
     series = []
@@ -159,7 +169,7 @@ def cashflow(db: Session, ws: str, currency: str, months: int, today: date) -> d
 
 
 def categories(db: Session, ws: str, currency: str, month: date) -> dict:
-    conv = Converter(db, currency)
+    conv = Converter(db, currency, ws)
     f = compute_flows(db, ws, month_start(month), month_end(month), conv)
     cats = {c.id: c for c in db.scalars(select(TransactionCategory).where(TransactionCategory.workspace_id == ws))}
     rows = sorted(({"category_id": cid, "name": cats[cid].name if cid in cats else "Unknown",
@@ -186,7 +196,7 @@ def forecast(db: Session, ws: str, currency: str, today: date, days: int = 90) -
     The run-rate only uses confirmed non-subscription income/expense from the last 90 days and is only applied
     when there are at least 30 days of history. Everything returned here is a FORECAST, not a confirmed figure.
     """
-    conv = Converter(db, currency)
+    conv = Converter(db, currency, ws)
     start_bal, _, acc_rows = balances(db, ws, conv, today)
     if not acc_rows:
         return {"currency": currency, "status": "no_accounts", "points": [], "events": []}
@@ -287,12 +297,15 @@ def signals(db: Session, ws: str, currency: str, today: date) -> list[dict]:
                         "title": f"{b.name}: {pct}% used or reserved",
                         "detail": f"{format_plain(bs.available_minor, b.currency)} {b.currency} available this month",
                         "ids": [b.id]})
-    conv = Converter(db, currency)
+    conv = Converter(db, currency, ws)
     balances(db, ws, conv, today)
     if conv.missing:
-        out.append({"type": "missing_rate", "severity": "warning", "title": "Exchange rate needed",
-                    "detail": f"No rate on file for {', '.join(sorted(conv.missing))} → {currency}. "
-                              "Sync official rates in Settings.", "ids": []})
+        stale = sorted(conv.stale & conv.missing)
+        out.append({"type": "stale_rate" if stale else "missing_rate", "severity": "warning",
+                    "title": "Exchange rate out of date" if stale else "Exchange rate needed",
+                    "detail": f"No current rate for {', '.join(sorted(conv.missing))} → {currency}"
+                              f"{' (latest on file is too old)' if stale else ''}. Those amounts are left out of totals "
+                              "until you sync official rates in Settings.", "ids": []})
     for r in retirement_limits(db, ws, today):
         if r["remaining"]["minor"] == 0:
             out.append({"type": "limit_reached", "severity": "info", "title": f"{r['label']} reached",

@@ -17,13 +17,19 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{BACKEND_DIR / 'omh-dev.sqlite3'}"
     # Must be provided via environment outside development. Dev default is random per process.
     omh_secret_key: str = ""
+    omh_field_key: str = ""  # key material for encrypting sensitive fields (MFA secrets); falls back to secret key
     access_token_minutes: int = 60 * 12
     cookie_secure: bool = False
-    demo_login_enabled: bool = True
+    demo_login_enabled: bool = False  # only honoured when app_env == "development"
     default_reporting_currency: str = "PLN"
     cors_origins: str = "http://localhost:3100,http://127.0.0.1:3100"
     nbp_api_base: str = "https://api.nbp.pl/api"
     budget_alert_threshold_pct: int = 80
+    # RAGI → OMH service calls (budget reservations). Token is compared as a sha256 hash; never committed.
+    ecosystem_service_token: str = ""
+    omh_ragi_workspace_id: str = ""
+    lockout_attempts: int = 5
+    lockout_minutes: int = 15
 
     @property
     def is_sqlite(self) -> bool:

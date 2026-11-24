@@ -16,6 +16,7 @@ from app.modules.transactions import service as txns
 KINDS = {"ai", "api", "hosting", "domain", "software", "media", "client", "other"}
 INTERVALS = {"weekly", "monthly", "quarterly", "yearly"}
 AI_KINDS = {"ai", "api"}
+PER_YEAR = {"weekly": 52, "monthly": 12, "quarterly": 4, "yearly": 1}
 INFRA_KINDS = {"hosting", "domain"}
 _SUFFIX = re.compile(r"\b(inc|ltd|llc|sp z o o|gmbh|plc|corp|co)\b")
 
@@ -43,19 +44,37 @@ def duplicates(subs: list[Subscription]) -> list[list[str]]:
     return [ids for ids in groups.values() if len(ids) > 1]
 
 
-def record_payment(db: Session, s: Subscription, *, on: date | None, user_id: str | None):
+class AlreadyPaid(txns.TxnError):
+    pass
+
+
+def record_payment(db: Session, s: Subscription, *, on: date | None, today: date, user_id: str | None,
+                   renewal: date | None = None):
+    """Idempotent per renewal: the client says which renewal it is paying; a repeat for it is refused."""
     if not s.account_id:
         raise txns.TxnError("Link an account to this subscription before recording a payment")
-    pay_date = on or s.next_renewal or date.today()
+    if renewal is not None and s.next_renewal != renewal:
+        raise AlreadyPaid("This renewal is already recorded")
+    pay_date = on or s.next_renewal or today
+    key = f"subscription:{s.id}:{(s.next_renewal or pay_date).isoformat()}"
+    from sqlalchemy import select as _select
+
+    from app.database.models import Transaction
+
+    if db.scalar(_select(Transaction.id).where(Transaction.workspace_id == s.workspace_id,
+                                               Transaction.idempotency_key == key)):
+        raise AlreadyPaid("This renewal is already recorded")
     kind = "income" if s.direction == "incoming" else "expense"
     t = txns.create(db, s.workspace_id, txns.NewTxn(
         kind=kind, account_id=s.account_id, amount_minor=s.amount_minor, currency=s.currency, txn_date=pay_date,
         description=f"{s.name} ({s.interval})", payee=s.vendor, category_id=s.category_id, project=s.project,
-        subscription_id=s.id, source="subscription"), user_id)
+        subscription_id=s.id, source="subscription", idempotency_key=key), user_id)
     base = s.next_renewal or pay_date
-    s.next_renewal = next_occurrence(base, s.interval)
+    anchor = s.anchor_day or base.day
+    s.anchor_day = anchor
+    s.next_renewal = next_occurrence(base, s.interval, anchor)
     while s.next_renewal <= pay_date:
-        s.next_renewal = next_occurrence(s.next_renewal, s.interval)
+        s.next_renewal = next_occurrence(s.next_renewal, s.interval, anchor)
     emit(db, workspace_id=s.workspace_id, event_type="subscription.updated",
          data={"subscription_id": s.id, "status": s.status, "next_renewal": s.next_renewal.isoformat(),
                "paid_transaction_id": t.id})
@@ -68,9 +87,10 @@ def renewals_between(s: Subscription, start: date, end: date) -> list[date]:
     if not is_live(s) or not s.next_renewal:
         return []
     out, d = [], s.next_renewal
+    anchor = s.anchor_day or d.day
     while d < start:
-        d = next_occurrence(d, s.interval)
+        d = next_occurrence(d, s.interval, anchor)
     while d <= end:
         out.append(d)
-        d = next_occurrence(d, s.interval)
+        d = next_occurrence(d, s.interval, anchor)
     return out

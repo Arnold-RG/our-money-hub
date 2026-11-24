@@ -21,6 +21,7 @@ from app.database.models import (AIUsageRecord, AuditLog, Budget, EventInbox, Ev
                                  Subscription, Transaction, User)
 from app.database.session import get_db
 from app.modules.currencies import service as fx
+from app.modules.audit.service import audit
 from app.modules.reports import service as reports
 
 router = APIRouter(tags=["insight"])
@@ -81,14 +82,14 @@ def currencies():
 
 
 @router.get("/exchange-rates")
-def list_rates(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    return [rate_view(r) for r in fx.latest_rates(db)]
+def list_rates(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depends(get_db)):
+    return [rate_view(r) for r in fx.latest_rates(db, ctx.workspace_id)]
 
 
 @router.get("/exchange-rates/quote")
-def quote(base: str, quote: str, on: date | None = None, user: User = Depends(current_user),
+def quote(base: str, quote: str, on: date | None = None, ctx: WorkspaceContext = Depends(read_ws),
           db: Session = Depends(get_db)):
-    q = fx.get_rate(db, base, quote, on or today())
+    q = fx.get_rate(db, base, quote, on or today(), ctx.workspace_id)
     if not q:
         raise HTTPException(404, f"No {base}→{quote} rate on file")
     return {"base": base.upper(), "quote": quote.upper(), "rate": str(q.rate.quantize(Decimal("0.0000000001"))),
@@ -104,19 +105,39 @@ class RateIn(BaseModel):
 
 
 @router.post("/exchange-rates", status_code=201)
-def add_rate(body: RateIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def add_rate(body: RateIn, ctx: WorkspaceContext = Depends(write_ws), db: Session = Depends(get_db)):
+    """Manual rates apply to THIS workspace only; official rates stay read-only."""
     try:
-        rate = Decimal(body.rate.replace(",", "."))
-        r = fx.add_manual(db, body.base, body.quote, rate, body.effective_date, body.note)
+        txt = body.rate.strip().replace(",", ".")
+        if not txt.replace(".", "", 1).isascii() or not txt.replace(".", "", 1).isdigit():
+            raise ValueError("use digits and one decimal point")
+        rate = Decimal(txt)
+        r = fx.add_manual(db, ctx.workspace_id, body.base, body.quote, rate, body.effective_date, body.note)
     except (InvalidOperation, ValueError, MoneyError) as e:
         raise HTTPException(422, f"Invalid rate: {e}") from e
+    audit(db, workspace_id=ctx.workspace_id, user_id=ctx.user.id, action="exchange_rate.added", entity="exchange_rate",
+          entity_id=r.id, detail={"pair": f"{r.base}/{r.quote}", "rate": str(rate)})
     db.commit()
     return rate_view(r)
 
 
+_last_sync = {"at": 0.0}
+SYNC_COOLDOWN_S = 600
+
+
 @router.post("/exchange-rates/sync")
-def sync_rates(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Fetch official rates now: NBP (A: EUR/USD, B: RWF), ECB and BNR (relayed by Frankfurter)."""
+def sync_rates(ctx: WorkspaceContext = Depends(write_ws), db: Session = Depends(get_db)):
+    """Fetch official rates now: NBP (A: EUR/USD, B: RWF), ECB and BNR (relayed by Frankfurter).
+
+    Editors of a real (non-demo) workspace only, with a global cooldown so nobody can drive outbound traffic.
+    """
+    import time
+
+    if ctx.user.is_demo:
+        raise HTTPException(403, "Not available in the demo")
+    if time.time() - _last_sync["at"] < SYNC_COOLDOWN_S:
+        return {"stored": [rate_view(r) for r in fx.latest_rates(db, None)], "errors": {}, "cached": True}
+    _last_sync["at"] = time.time()
     res = fx.sync_all(db)
     db.commit()
     return {"stored": [rate_view(r) for r in res["stored"]], "errors": res["errors"]}
@@ -161,7 +182,8 @@ def outbox(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depends(get_d
     rows = db.scalars(select(EventOutbox).where(EventOutbox.workspace_id == ctx.workspace_id)
                       .order_by(EventOutbox.occurred_at.desc()).limit(100))
     return [{"event_id": e.id, "event_type": e.event_type, "schema_version": e.schema_version,
-             "occurred_at": e.occurred_at.isoformat(), "published": e.published_at is not None, "data": e.payload["data"]}
+             "occurred_at": e.occurred_at.isoformat(), "published": e.published_at is not None, "data": e.payload.get("data"),
+             "envelope": e.payload}
             for e in rows]
 
 

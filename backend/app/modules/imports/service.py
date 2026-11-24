@@ -113,6 +113,14 @@ def commit(db: Session, ws: str, rows: list[Row], user_id: str | None) -> int:
     return n
 
 
+_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def safe_cell(v: str) -> str:
+    """Neutralise spreadsheet formula injection (OWASP CSV injection) in free-text cells."""
+    return "'" + v if v and v.startswith(_FORMULA) else v
+
+
 def export_csv(db: Session, ws: str) -> str:
     accounts = {a.id: a.name for a in db.scalars(select(FinancialAccount).where(FinancialAccount.workspace_id == ws))}
     cats = {c.id: c.name for c in db.scalars(select(TransactionCategory).where(TransactionCategory.workspace_id == ws))}
@@ -121,11 +129,11 @@ def export_csv(db: Session, ws: str) -> str:
     w.writerow(EXPORT_COLUMNS)
     for t in db.scalars(select(Transaction).where(Transaction.workspace_id == ws)
                         .order_by(Transaction.txn_date, Transaction.created_at)):
-        w.writerow([t.id, t.txn_date.isoformat(), t.kind, t.status, t.description, t.payee or "",
-                    format_plain(t.amount_minor, t.currency), t.currency, accounts.get(t.account_id, ""),
-                    accounts.get(t.to_account_id, "") if t.to_account_id else "",
+        w.writerow([t.id, t.txn_date.isoformat(), t.kind, t.status, safe_cell(t.description), safe_cell(t.payee or ""),
+                    format_plain(t.amount_minor, t.currency), t.currency, safe_cell(accounts.get(t.account_id, "")),
+                    safe_cell(accounts.get(t.to_account_id, "")) if t.to_account_id else "",
                     format_plain(t.to_amount_minor, _dest_currency(db, t)) if t.to_amount_minor and t.to_account_id else "",
-                    cats.get(t.category_id, "") if t.category_id else "", t.project or "", t.source,
+                    safe_cell(cats.get(t.category_id, "")) if t.category_id else "", safe_cell(t.project or ""), t.source,
                     t.reversal_of_id or ""])
     return buf.getvalue()
 

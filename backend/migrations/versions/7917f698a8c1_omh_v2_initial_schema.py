@@ -1,8 +1,8 @@
 """omh v2 initial schema
 
-Revision ID: e1ba6643b980
+Revision ID: 7917f698a8c1
 Revises: 
-Create Date: 2026-11-24 23:45:22.123762
+Create Date: 2026-11-24 23:54:43.636194
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'e1ba6643b980'
+revision: str = '7917f698a8c1'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -61,25 +61,6 @@ def upgrade() -> None:
     with op.batch_alter_table('event_outbox', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_event_outbox_workspace_id'), ['workspace_id'], unique=False)
 
-    op.create_table('exchange_rates',
-    sa.Column('id', sa.String(length=36), nullable=False),
-    sa.Column('base', sa.String(length=3), nullable=False),
-    sa.Column('quote', sa.String(length=3), nullable=False),
-    sa.Column('rate', sa.Numeric(precision=24, scale=10), nullable=False),
-    sa.Column('effective_date', sa.Date(), nullable=False),
-    sa.Column('source', sa.String(length=120), nullable=False),
-    sa.Column('provider', sa.String(length=20), nullable=False),
-    sa.Column('via', sa.String(length=40), nullable=True),
-    sa.Column('rate_type', sa.String(length=4), nullable=False),
-    sa.Column('source_url', sa.String(length=255), nullable=True),
-    sa.Column('priority', sa.Integer(), nullable=False),
-    sa.Column('fetched_at', sa.DateTime(timezone=True), nullable=False),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('base', 'quote', 'effective_date', 'source', 'rate_type', name='uq_rate')
-    )
-    with op.batch_alter_table('exchange_rates', schema=None) as batch_op:
-        batch_op.create_index('ix_rate_lookup', ['base', 'quote', 'effective_date'], unique=False)
-
     op.create_table('financial_workspaces',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('name', sa.String(length=120), nullable=False),
@@ -96,6 +77,11 @@ def upgrade() -> None:
     sa.Column('password_hash', sa.String(length=255), nullable=False),
     sa.Column('is_demo', sa.Boolean(), nullable=False),
     sa.Column('reporting_currency', sa.String(length=3), nullable=False),
+    sa.Column('failed_logins', sa.Integer(), nullable=False),
+    sa.Column('locked_until', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('mfa_secret_enc', sa.Text(), nullable=True),
+    sa.Column('mfa_enabled', sa.Boolean(), nullable=False),
+    sa.Column('mfa_last_counter', sa.BigInteger(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
@@ -126,6 +112,30 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_ai_usage_records_occurred_on'), ['occurred_on'], unique=False)
         batch_op.create_index(batch_op.f('ix_ai_usage_records_workspace_id'), ['workspace_id'], unique=False)
 
+    op.create_table('exchange_rates',
+    sa.Column('id', sa.String(length=36), nullable=False),
+    sa.Column('workspace_id', sa.String(length=36), nullable=True),
+    sa.Column('base', sa.String(length=3), nullable=False),
+    sa.Column('quote', sa.String(length=3), nullable=False),
+    sa.Column('rate', sa.Numeric(precision=24, scale=10), nullable=False),
+    sa.Column('effective_date', sa.Date(), nullable=False),
+    sa.Column('source', sa.String(length=120), nullable=False),
+    sa.Column('provider', sa.String(length=20), nullable=False),
+    sa.Column('via', sa.String(length=40), nullable=True),
+    sa.Column('rate_type', sa.String(length=4), nullable=False),
+    sa.Column('source_url', sa.String(length=255), nullable=True),
+    sa.Column('priority', sa.Integer(), nullable=False),
+    sa.Column('fetched_at', sa.DateTime(timezone=True), nullable=False),
+    sa.CheckConstraint("rate_type in ('mid','bid','ask')", name='ck_rate_type'),
+    sa.CheckConstraint('rate > 0', name='ck_rate_positive'),
+    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('workspace_id', 'base', 'quote', 'effective_date', 'source', 'rate_type', name='uq_rate')
+    )
+    with op.batch_alter_table('exchange_rates', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_exchange_rates_workspace_id'), ['workspace_id'], unique=False)
+        batch_op.create_index('ix_rate_lookup', ['base', 'quote', 'effective_date'], unique=False)
+
     op.create_table('journal_entries',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('workspace_id', sa.String(length=36), nullable=False),
@@ -135,9 +145,10 @@ def upgrade() -> None:
     sa.Column('reverses_entry_id', sa.String(length=36), nullable=True),
     sa.Column('created_by', sa.String(length=36), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.CheckConstraint("status in ('confirmed','pending')", name='ck_entry_status'),
     sa.ForeignKeyConstraint(['created_by'], ['users.id'], ),
     sa.ForeignKeyConstraint(['reverses_entry_id'], ['journal_entries.id'], ),
-    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('journal_entries', schema=None) as batch_op:
@@ -150,12 +161,26 @@ def upgrade() -> None:
     sa.Column('name', sa.String(length=160), nullable=False),
     sa.Column('type', sa.String(length=12), nullable=False),
     sa.Column('currency', sa.String(length=3), nullable=True),
-    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('workspace_id', 'code', name='uq_ledger_code')
     )
     with op.batch_alter_table('ledger_accounts', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_ledger_accounts_workspace_id'), ['workspace_id'], unique=False)
+
+    op.create_table('user_sessions',
+    sa.Column('token_hash', sa.String(length=64), nullable=False),
+    sa.Column('user_id', sa.String(length=36), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('mfa_pending', sa.Boolean(), nullable=False),
+    sa.Column('mfa_failures', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('token_hash')
+    )
+    with op.batch_alter_table('user_sessions', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_user_sessions_user_id'), ['user_id'], unique=False)
 
     op.create_table('workspace_members',
     sa.Column('workspace_id', sa.String(length=36), nullable=False),
@@ -176,8 +201,9 @@ def upgrade() -> None:
     sa.Column('archived', sa.Boolean(), nullable=False),
     sa.Column('ledger_account_id', sa.String(length=36), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.CheckConstraint("currency in ('PLN','RWF','EUR','USD')", name='ck_acct_currency'),
     sa.ForeignKeyConstraint(['ledger_account_id'], ['ledger_accounts.id'], ),
-    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('financial_accounts', schema=None) as batch_op:
@@ -192,7 +218,7 @@ def upgrade() -> None:
     sa.Column('credit_minor', sa.BigInteger(), nullable=False),
     sa.CheckConstraint('(debit_minor = 0) OR (credit_minor = 0)', name='ck_line_one_side'),
     sa.CheckConstraint('debit_minor >= 0 AND credit_minor >= 0', name='ck_line_nonneg'),
-    sa.ForeignKeyConstraint(['entry_id'], ['journal_entries.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['entry_id'], ['journal_entries.id'], ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['ledger_account_id'], ['ledger_accounts.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -264,6 +290,7 @@ def upgrade() -> None:
     sa.Column('currency', sa.String(length=3), nullable=False),
     sa.Column('interval', sa.String(length=10), nullable=False),
     sa.Column('next_renewal', sa.Date(), nullable=True),
+    sa.Column('anchor_day', sa.Integer(), nullable=True),
     sa.Column('status', sa.String(length=12), nullable=False),
     sa.Column('account_id', sa.String(length=36), nullable=True),
     sa.Column('category_id', sa.String(length=36), nullable=True),
@@ -293,9 +320,12 @@ def upgrade() -> None:
     sa.Column('settled_usage_id', sa.String(length=36), nullable=True),
     sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.CheckConstraint("status in ('active','settled','released')", name='ck_reservation_status'),
+    sa.CheckConstraint('amount_minor > 0', name='ck_reservation_positive'),
     sa.ForeignKeyConstraint(['budget_id'], ['budgets.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['settled_usage_id'], ['ai_usage_records.id'], ),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('budget_id', 'external_ref', name='uq_reservation_ref')
     )
     with op.batch_alter_table('budget_reservations', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_budget_reservations_budget_id'), ['budget_id'], unique=False)
@@ -321,17 +351,24 @@ def upgrade() -> None:
     sa.Column('reversed_by_id', sa.String(length=36), nullable=True),
     sa.Column('import_hash', sa.String(length=64), nullable=True),
     sa.Column('source', sa.String(length=20), nullable=False),
+    sa.Column('idempotency_key', sa.String(length=120), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.CheckConstraint("currency in ('PLN','RWF','EUR','USD')", name='ck_txn_currency'),
+    sa.CheckConstraint("kind in ('income','expense','transfer','opening','reversal')", name='ck_txn_kind'),
+    sa.CheckConstraint("status in ('confirmed','pending')", name='ck_txn_status'),
     sa.CheckConstraint('amount_minor > 0', name='ck_txn_positive'),
-    sa.ForeignKeyConstraint(['account_id'], ['financial_accounts.id'], ),
+    sa.ForeignKeyConstraint(['account_id'], ['financial_accounts.id'], ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['category_id'], ['transaction_categories.id'], ),
     sa.ForeignKeyConstraint(['journal_entry_id'], ['journal_entries.id'], ),
     sa.ForeignKeyConstraint(['reversal_of_id'], ['transactions.id'], ),
     sa.ForeignKeyConstraint(['reversed_by_id'], ['transactions.id'], ),
     sa.ForeignKeyConstraint(['subscription_id'], ['subscriptions.id'], ),
     sa.ForeignKeyConstraint(['to_account_id'], ['financial_accounts.id'], ),
-    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['workspace_id'], ['financial_workspaces.id'], ondelete='RESTRICT'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('reversal_of_id'),
+    sa.UniqueConstraint('workspace_id', 'idempotency_key', name='uq_txn_idempotency'),
+    sa.UniqueConstraint('workspace_id', 'import_hash', name='uq_txn_import_hash')
     )
     with op.batch_alter_table('transactions', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_transactions_account_id'), ['account_id'], unique=False)
@@ -340,6 +377,36 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_transactions_workspace_id'), ['workspace_id'], unique=False)
 
     # ### end Alembic commands ###
+
+    # ---- Postgres-only database guards (posted history is append-only and always balanced) ----
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("""
+        CREATE OR REPLACE FUNCTION omh_check_entry_balanced() RETURNS trigger AS $$
+        DECLARE bad record;
+        BEGIN
+          SELECT currency, sum(debit_minor) d, sum(credit_minor) c INTO bad
+            FROM journal_entry_lines WHERE entry_id = COALESCE(NEW.entry_id, OLD.entry_id)
+            GROUP BY currency HAVING sum(debit_minor) <> sum(credit_minor) LIMIT 1;
+          IF FOUND THEN
+            RAISE EXCEPTION 'journal entry % does not balance in %', COALESCE(NEW.entry_id, OLD.entry_id), bad.currency;
+          END IF;
+          RETURN NULL;
+        END $$ LANGUAGE plpgsql;
+        """)
+        op.execute("""
+        CREATE CONSTRAINT TRIGGER omh_entry_balanced AFTER INSERT OR UPDATE OR DELETE ON journal_entry_lines
+          DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION omh_check_entry_balanced();
+        """)
+        op.execute("""
+        CREATE OR REPLACE FUNCTION omh_append_only() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION '% is append-only; post a reversing entry instead', TG_TABLE_NAME; END $$ LANGUAGE plpgsql;
+        """)
+        op.execute("CREATE TRIGGER omh_lines_no_update BEFORE UPDATE OR DELETE ON journal_entry_lines "
+                   "FOR EACH ROW EXECUTE FUNCTION omh_append_only();")
+        op.execute("CREATE TRIGGER omh_entries_no_delete BEFORE DELETE ON journal_entries "
+                   "FOR EACH ROW EXECUTE FUNCTION omh_append_only();")
+        op.execute("CREATE TRIGGER omh_audit_no_change BEFORE UPDATE OR DELETE ON audit_logs "
+                   "FOR EACH ROW EXECUTE FUNCTION omh_append_only();")
 
 
 def downgrade() -> None:
@@ -382,6 +449,10 @@ def downgrade() -> None:
 
     op.drop_table('financial_accounts')
     op.drop_table('workspace_members')
+    with op.batch_alter_table('user_sessions', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_user_sessions_user_id'))
+
+    op.drop_table('user_sessions')
     with op.batch_alter_table('ledger_accounts', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_ledger_accounts_workspace_id'))
 
@@ -390,6 +461,11 @@ def downgrade() -> None:
         batch_op.drop_index(batch_op.f('ix_journal_entries_workspace_id'))
 
     op.drop_table('journal_entries')
+    with op.batch_alter_table('exchange_rates', schema=None) as batch_op:
+        batch_op.drop_index('ix_rate_lookup')
+        batch_op.drop_index(batch_op.f('ix_exchange_rates_workspace_id'))
+
+    op.drop_table('exchange_rates')
     with op.batch_alter_table('ai_usage_records', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_ai_usage_records_workspace_id'))
         batch_op.drop_index(batch_op.f('ix_ai_usage_records_occurred_on'))
@@ -400,10 +476,6 @@ def downgrade() -> None:
 
     op.drop_table('users')
     op.drop_table('financial_workspaces')
-    with op.batch_alter_table('exchange_rates', schema=None) as batch_op:
-        batch_op.drop_index('ix_rate_lookup')
-
-    op.drop_table('exchange_rates')
     with op.batch_alter_table('event_outbox', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_event_outbox_workspace_id'))
 

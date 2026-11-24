@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -23,49 +23,76 @@ class RateQuote:
     source: str
 
 
-def _direct(db: Session, base: str, quote: str, on: date) -> ExchangeRate | None:
-    return db.scalar(
+# Maximum age of a rate before it is considered stale and refused (fail closed, warn the owner).
+MAX_AGE_DAYS = {"nbp_A": 7, "nbp_B": 14, "ecb": 7, "bnr": 7, "manual": 31}
+
+
+def max_age(r: ExchangeRate) -> int:
+    if r.provider == "nbp":
+        return MAX_AGE_DAYS["nbp_B" if "table B" in r.source else "nbp_A"]
+    return MAX_AGE_DAYS.get(r.provider, 7)
+
+
+def _scope(ws: str | None):
+    return ExchangeRate.workspace_id.is_(None) if ws is None else or_(ExchangeRate.workspace_id.is_(None),
+                                                                        ExchangeRate.workspace_id == ws)
+
+
+def _direct(db: Session, base: str, quote: str, on: date, ws: str | None) -> tuple[ExchangeRate | None, bool]:
+    """Freshest usable rate on/before ``on`` (official + this workspace's manual rates). Returns (rate, stale_seen)."""
+    rows = db.scalars(
         select(ExchangeRate)
         .where(ExchangeRate.base == base, ExchangeRate.quote == quote, ExchangeRate.effective_date <= on,
-               ExchangeRate.rate_type == "mid")
+               ExchangeRate.rate_type == "mid", _scope(ws))
         .order_by(ExchangeRate.effective_date.desc(), ExchangeRate.priority, ExchangeRate.fetched_at.desc())
-        .limit(1)
-    )
+        .limit(8)
+    ).all()
+    stale = False
+    for r in rows:
+        if (on - r.effective_date).days <= max_age(r):
+            return r, stale
+        stale = True
+    return None, stale
 
 
-def _pair(db: Session, base: str, quote: str, on: date) -> RateQuote | None:
+def _pair(db: Session, base: str, quote: str, on: date, ws: str | None) -> tuple[RateQuote | None, bool]:
     """Best rate for base→quote on a date: newest effective date wins, then source priority
     (manual > NBP > ECB > BNR). Inverse quotes are used when they are newer or the only option."""
     cands = []
-    r = _direct(db, base, quote, on)
+    r, s1 = _direct(db, base, quote, on, ws)
     if r:
         cands.append((r.effective_date, -r.priority, 1, RateQuote(Decimal(r.rate), r.effective_date, r.source)))
-    inv = _direct(db, quote, base, on)
+    inv, s2 = _direct(db, quote, base, on, ws)
     if inv:
         cands.append((inv.effective_date, -inv.priority, 0,
                       RateQuote(Decimal(1) / Decimal(inv.rate), inv.effective_date, f"inverse of {inv.source}")))
     if not cands:
-        return None
-    return max(cands, key=lambda c: c[:3])[3]
+        return None, s1 or s2
+    return max(cands, key=lambda c: c[:3])[3], False
 
 
-def get_rate(db: Session, base: str, quote: str, on: date) -> RateQuote | None:
+def get_rate_ex(db: Session, base: str, quote: str, on: date, ws: str | None = None) -> tuple[RateQuote | None, bool]:
     base, quote = normalize_currency(base), normalize_currency(quote)
     if base == quote:
-        return RateQuote(Decimal(1), None, "identity")
-    q = _pair(db, base, quote, on)
+        return RateQuote(Decimal(1), None, "identity"), False
+    q, stale = _pair(db, base, quote, on, ws)
     if q:
-        return q
+        return q, False
     if PIVOT not in (base, quote):
-        a, b = _pair(db, base, PIVOT, on), _pair(db, PIVOT, quote, on)
+        (a, sa), (b, sb) = _pair(db, base, PIVOT, on, ws), _pair(db, PIVOT, quote, on, ws)
         if a and b:
             eff = min(d for d in (a.effective_date, b.effective_date) if d)
-            return RateQuote(a.rate * b.rate, eff, f"cross via {PIVOT} ({a.source}; {b.source})")
-    return None
+            return RateQuote(a.rate * b.rate, eff, f"cross via {PIVOT} ({a.source}; {b.source})"), False
+        stale = stale or sa or sb
+    return None, stale
 
 
-def convert_on(db: Session, money: Money, to: str, on: date) -> Money | None:
-    q = get_rate(db, money.currency, to, on)
+def get_rate(db: Session, base: str, quote: str, on: date, ws: str | None = None) -> RateQuote | None:
+    return get_rate_ex(db, base, quote, on, ws)[0]
+
+
+def convert_on(db: Session, money: Money, to: str, on: date, ws: str | None = None) -> Money | None:
+    q = get_rate(db, money.currency, to, on, ws)
     if not q:
         return None
     return money if money.currency == to else convert(money, to, q.rate)
@@ -74,8 +101,9 @@ def convert_on(db: Session, money: Money, to: str, on: date) -> Money | None:
 class Converter:
     """Request-scoped cache so reports don't re-query the same rate thousands of times."""
 
-    def __init__(self, db: Session, to: str):
-        self.db, self.to = db, normalize_currency(to)
+    def __init__(self, db: Session, to: str, ws: str | None = None):
+        self.db, self.to, self.ws = db, normalize_currency(to), ws
+        self.stale: set[str] = set()
         self._cache: dict[tuple[str, date], RateQuote | None] = {}
         self.missing: set[str] = set()
         self.used: dict[str, RateQuote] = {}
@@ -85,7 +113,10 @@ class Converter:
             return money
         key = (money.currency, on)
         if key not in self._cache:
-            self._cache[key] = get_rate(self.db, money.currency, self.to, on)
+            q, stale = get_rate_ex(self.db, money.currency, self.to, on, self.ws)
+            self._cache[key] = q
+            if stale:
+                self.stale.add(money.currency)
         q = self._cache[key]
         if not q:
             self.missing.add(money.currency)
@@ -99,10 +130,13 @@ NBP_URL = "https://api.nbp.pl"
 FRANKFURTER = "https://api.frankfurter.dev/v2"
 
 
-def add_manual(db: Session, base: str, quote: str, rate: Decimal, effective: date, note: str | None = None) -> ExchangeRate:
-    if rate <= 0:
+def add_manual(db: Session, ws: str, base: str, quote: str, rate: Decimal, effective: date,
+               note: str | None = None) -> ExchangeRate:
+    if not rate.is_finite() or rate <= 0:
         raise ValueError("Rate must be positive")
-    r = ExchangeRate(base=normalize_currency(base), quote=normalize_currency(quote), rate=rate,
+    if normalize_currency(base) == normalize_currency(quote):
+        raise ValueError("Base and quote must differ")
+    r = ExchangeRate(workspace_id=ws, base=normalize_currency(base), quote=normalize_currency(quote), rate=rate,
                      effective_date=effective, source=f"manual{': ' + note if note else ''}"[:120],
                      provider="manual", priority=PRIORITY["manual"])
     db.add(r)
@@ -112,7 +146,7 @@ def add_manual(db: Session, base: str, quote: str, rate: Decimal, effective: dat
 
 def _store(db: Session, *, base: str, quote: str, rate: Decimal, eff: date, source: str, provider: str,
            url: str, via: str | None = None, rate_type: str = "mid") -> ExchangeRate:
-    exists = db.scalar(select(ExchangeRate).where(ExchangeRate.base == base, ExchangeRate.quote == quote,
+    exists = db.scalar(select(ExchangeRate).where(ExchangeRate.workspace_id.is_(None), ExchangeRate.base == base, ExchangeRate.quote == quote,
                                                   ExchangeRate.effective_date == eff, ExchangeRate.source == source,
                                                   ExchangeRate.rate_type == rate_type))
     if exists:
@@ -175,13 +209,14 @@ def sync_all(db: Session, client: httpx.Client | None = None) -> dict:
     return result
 
 
-def latest_rates(db: Session) -> list[ExchangeRate]:
+def latest_rates(db: Session, ws: str | None = None) -> list[ExchangeRate]:
     out = []
     for code in CURRENCIES:
         for other in CURRENCIES:
             if code == other:
                 continue
-            rows = db.scalars(select(ExchangeRate).where(ExchangeRate.base == code, ExchangeRate.quote == other)
+            rows = db.scalars(select(ExchangeRate).where(ExchangeRate.base == code, ExchangeRate.quote == other,
+                                                         _scope(ws))
                               .order_by(ExchangeRate.provider, ExchangeRate.effective_date.desc())).all()
             seen = set()
             for r in rows:  # newest per provider

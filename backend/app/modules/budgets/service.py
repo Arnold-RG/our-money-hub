@@ -75,7 +75,7 @@ def ai_actual(db: Session, b: Budget, start: date, end: date, conv: Converter) -
 
 def status(db: Session, b: Budget, on: date) -> BudgetStatus:
     start, end = month_start(on), month_end(on)
-    conv = Converter(db, b.currency)
+    conv = Converter(db, b.currency, b.workspace_id)
     if b.scope == "ai":
         actual, missing = ai_actual(db, b, start, end, conv)
     else:
@@ -100,11 +100,27 @@ def check_alerts(db: Session, b: Budget, on: date) -> BudgetStatus:
 
 
 def reserve(db: Session, b: Budget, *, amount_minor: int, purpose: str, agent_id: str | None,
-            external_ref: str | None, on: date, user_id: str | None) -> BudgetReservation:
+            external_ref: str | None, on: date, user_id: str | None, enforce: bool = False) -> BudgetReservation:
+    """Check-and-reserve under a row lock on the budget (SELECT … FOR UPDATE on Postgres).
+
+    Fails CLOSED: if any spending in this budget cannot be converted (missing or stale rate), the actual
+    spend is unknown, so a hard-limited budget refuses every reservation until rates are fixed.
+    """
     if amount_minor <= 0:
         raise BudgetError("Reservation must be greater than zero")
+    if external_ref:
+        dup = db.scalar(select(BudgetReservation).where(BudgetReservation.budget_id == b.id,
+                                                        BudgetReservation.external_ref == external_ref))
+        if dup:
+            return dup  # idempotent for retried calls (e.g. the same RAGI run_id)
+    b = db.scalar(select(Budget).where(Budget.id == b.id).with_for_update())
     st = status(db, b, on)
-    if b.hard_limit and amount_minor > st.available_minor:
+    hard = b.hard_limit or enforce
+    if st.unconverted and hard:
+        raise BudgetUnavailable(
+            f"Can't verify spending in '{b.name}': no current exchange rate for {', '.join(sorted(st.unconverted))}. "
+            "Sync rates before reserving.")
+    if hard and amount_minor > st.available_minor:
         raise BudgetUnavailable(
             f"Only {Money(max(st.available_minor, 0), b.currency)} available in '{b.name}' this month")
     r = BudgetReservation(budget_id=b.id, purpose=purpose[:255], agent_id=agent_id, external_ref=external_ref,
@@ -120,6 +136,8 @@ def reserve(db: Session, b: Budget, *, amount_minor: int, purpose: str, agent_id
 
 
 def resolve(db: Session, r: BudgetReservation, new_status: str, usage_id: str | None, user_id: str | None) -> None:
+    if new_status not in {"settled", "released"}:
+        raise BudgetError("Reservations can only be settled or released")
     if r.status != "active":
         raise BudgetError(f"Reservation is already {r.status}")
     r.status = new_status

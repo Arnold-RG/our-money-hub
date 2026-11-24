@@ -65,6 +65,14 @@ def post(db: Session, *, workspace_id: str, entry_date: date, memo: str, status:
     validate_lines(lines)
     if status not in {"confirmed", "pending"}:
         raise LedgerError("Only confirmed or pending entries can be posted")
+    ids = {ln.ledger_account_id for ln in lines}
+    accounts = {la.id: la for la in db.scalars(select(LedgerAccount).where(LedgerAccount.id.in_(ids)))}
+    for ln in lines:
+        la = accounts.get(ln.ledger_account_id)
+        if la is None or la.workspace_id != workspace_id:
+            raise LedgerError("Ledger account does not belong to this workspace")
+        if la.currency and la.currency != ln.currency:
+            raise LedgerError(f"{la.name} is a {la.currency} account; line is in {ln.currency}")
     entry = JournalEntry(workspace_id=workspace_id, entry_date=entry_date, memo=memo[:255], status=status,
                          created_by=user_id, reverses_entry_id=reverses_entry_id)
     for ln in lines:
