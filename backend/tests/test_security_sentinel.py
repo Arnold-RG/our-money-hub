@@ -98,6 +98,66 @@ def test_concurrent_reservations_cannot_overspend():
     assert sorted(results) == ["ok", "refused"]
 
 
+def test_duplicate_external_ref_is_idempotent(api):
+    b = api.post("/budgets", {"name": "AI", "scope": "ai", "amount": "10.00", "currency": "USD",
+                              "hard_limit": True}).json()
+    first = api.post("/budget-reservations", {"budget_id": b["id"], "amount": "1.00", "purpose": "run",
+                                              "external_ref": "run-1"})
+    assert first.status_code == 201, first.text
+    again = api.post("/budget-reservations", {"budget_id": b["id"], "amount": "1.00", "purpose": "run",
+                                              "external_ref": "run-1"})
+    assert again.status_code == 201, again.text
+    assert again.json()["id"] == first.json()["id"]
+
+
+def test_reserve_same_ref_integrity_error_returns_existing_or_409(api, monkeypatch):
+    """If the idempotency read misses an existing row (the concurrent-retry race),
+    reserve must return the existing reservation or raise BudgetUnavailable (409),
+    never leak IntegrityError as HTTP 500."""
+    from sqlalchemy.orm import Session
+
+    from app.database.models import Budget
+    from app.database.session import SessionLocal
+    from app.modules.budgets import service as budgets
+
+    bjson = api.post("/budgets", {"name": "AI", "scope": "ai", "amount": "10.00", "currency": "USD",
+                                  "hard_limit": True}).json()
+    s = SessionLocal()
+    first = budgets.reserve(s, s.get(Budget, bjson["id"]), amount_minor=100, purpose="run",
+                            agent_id=None, external_ref="run-1", on=T, user_id=None)
+    s.commit()
+    first_id = first.id
+    s.close()
+
+    s2 = SessionLocal()
+    orig = Session.scalar
+    missed = {"once": False}
+
+    def scalar(self, statement, *args, **kwargs):
+        result = orig(self, statement, *args, **kwargs)
+        if (
+            not missed["once"]
+            and result is not None
+            and getattr(result, "external_ref", None) == "run-1"
+        ):
+            missed["once"] = True
+            return None
+        return result
+
+    monkeypatch.setattr(Session, "scalar", scalar)
+    try:
+        again = budgets.reserve(s2, s2.get(Budget, bjson["id"]), amount_minor=100, purpose="run",
+                                agent_id=None, external_ref="run-1", on=T, user_id=None)
+        s2.commit()
+        assert again.id == first_id
+    except budgets.BudgetUnavailable as exc:
+        s2.rollback()
+        assert "reservation" in str(exc).lower()
+    finally:
+        s2.close()
+    assert missed["once"] is True
+
+
 # ---------- Auth should-fix ----------
 def test_demo_login_off_by_default():
     assert TestClient(app).post("/api/v1/auth/demo", headers=H).status_code == 404

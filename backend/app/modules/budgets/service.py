@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dates import month_end, month_start
@@ -108,12 +109,14 @@ def reserve(db: Session, b: Budget, *, amount_minor: int, purpose: str, agent_id
     """
     if amount_minor <= 0:
         raise BudgetError("Reservation must be greater than zero")
+    # Lock first so a retried run_id is visible before we insert, and two
+    # concurrent reserves cannot both pass the availability check.
+    b = db.scalar(select(Budget).where(Budget.id == b.id).with_for_update())
     if external_ref:
         dup = db.scalar(select(BudgetReservation).where(BudgetReservation.budget_id == b.id,
                                                         BudgetReservation.external_ref == external_ref))
         if dup:
             return dup  # idempotent for retried calls (e.g. the same RAGI run_id)
-    b = db.scalar(select(Budget).where(Budget.id == b.id).with_for_update())
     st = status(db, b, on)
     hard = b.hard_limit or enforce
     if st.unconverted and hard:
@@ -125,8 +128,20 @@ def reserve(db: Session, b: Budget, *, amount_minor: int, purpose: str, agent_id
             f"Only {Money(max(st.available_minor, 0), b.currency)} available in '{b.name}' this month")
     r = BudgetReservation(budget_id=b.id, purpose=purpose[:255], agent_id=agent_id, external_ref=external_ref,
                           amount_minor=amount_minor, currency=b.currency, period_start=st.period_start)
-    db.add(r)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(r)
+            db.flush()
+    except IntegrityError as e:
+        # Concurrent retry of the same run_id: the unique constraint fired
+        # because the idempotency read raced with the insert. Return the
+        # existing row, or fail closed as BudgetUnavailable (HTTP 409).
+        if external_ref:
+            dup = db.scalar(select(BudgetReservation).where(BudgetReservation.budget_id == b.id,
+                                                            BudgetReservation.external_ref == external_ref))
+            if dup:
+                return dup
+        raise BudgetUnavailable("That reservation could not be completed") from e
     audit(db, workspace_id=b.workspace_id, user_id=user_id, action="reservation.created", entity="budget_reservation",
           entity_id=r.id, detail={"amount_minor": amount_minor, "currency": b.currency, "agent_id": agent_id})
     emit(db, workspace_id=b.workspace_id, event_type="budget.updated",
