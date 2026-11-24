@@ -29,7 +29,7 @@ The newest rate on or before the date wins, then priority. Inverse and cross rat
 - Settling replaces the estimate with the actual cost as an AI usage record. Releasing frees the hold.
 
 ## Subscriptions
-- Monthly equivalents are exact: yearly ÷ 12 and quarterly ÷ 3 use allocation, so twelve months add back up to the yearly price.
+- Totals are summed from exact annual amounts (e.g. 100 zł × 1 a year, 20 zł × 12) and rounded once, then ÷ 12 for the monthly figure, so there is no 8.33 × 12 drift. ARR is the exact annual sum, not MRR × 12. A single plan's monthly equivalent is rounded once (weekly uses 52/12).
 - Renewals keep month-end anchoring (31 Jan → 28/29 Feb → 31 Mar).
 - A payment names the renewal it pays, so the same renewal cannot be recorded twice.
 

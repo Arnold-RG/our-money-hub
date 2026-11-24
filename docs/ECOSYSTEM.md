@@ -18,4 +18,4 @@ Responses: 201 with `status: "active"` means granted. 409 `{detail}` means denie
 
 The OMH workspace that RAGI's organization maps to is configured by `OMH_RAGI_WORKSPACE_ID` and `OMH_RAGI_ORGANIZATION_ID`. The general mapping is still an open owner decision.
 
-Outgoing events (`budget.exceeded`, `budget.reservation.*` and others) are written to a transactional outbox with the full §10 envelope. A delivery worker is not built yet.
+Outgoing events (`budget.exceeded`, `budget.updated`, `subscription.updated`) are written to a transactional outbox with the full §10 envelope. A delivery worker is not built yet.
