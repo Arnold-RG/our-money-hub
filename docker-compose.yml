@@ -1,0 +1,40 @@
+# Our Money Hub: web (3420) + API (8420) + its own Postgres. Created by Arnold Rurangwa / Arnova Group.
+# Secrets come from .env (copy .env.example); nothing secret is written here.
+name: our-money-hub
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: omh
+      POSTGRES_DB: omh_db
+      POSTGRES_PASSWORD: ${OMH_DB_PASSWORD:?set OMH_DB_PASSWORD in .env}
+    volumes: [omh_pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omh -d omh_db"]
+      interval: 5s
+      retries: 10
+  api:
+    build: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+psycopg://omh:${OMH_DB_PASSWORD}@db:5432/omh_db
+      OMH_SECRET_KEY: ${OMH_SECRET_KEY:?set OMH_SECRET_KEY in .env}
+      OMH_FIELD_KEY: ${OMH_FIELD_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3420}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      RATES_AUTO_SYNC: ${RATES_AUTO_SYNC:-true}
+      ECOSYSTEM_KEYRING_FILE: ${ECOSYSTEM_KEYRING_FILE:-}
+      OMH_RAGI_WORKSPACE_ID: ${OMH_RAGI_WORKSPACE_ID:-}
+    volumes:
+      - ${ECOSYSTEM_KEYRING_HOST_PATH:-/dev/null}:/run/secrets/ecosystem-keyring.json:ro
+    depends_on: { db: { condition: service_healthy } }
+    ports: ["127.0.0.1:8420:8420"]
+  web:
+    build: ./frontend
+    environment:
+      OMH_API_INTERNAL_URL: http://api:8420
+    depends_on: [api]
+    ports: ["127.0.0.1:3420:3420"]
+volumes:
+  omh_pg: {}

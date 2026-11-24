@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: omh, POSTGRES_PASSWORD: omh-ci-only, POSTGRES_DB: omh_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U omh" --health-interval 5s --health-retries 10
+    defaults: { run: { working-directory: backend } }
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://omh:omh-ci-only@127.0.0.1:5432/omh_test
+      OMH_MIGRATION_TEST_URL: postgresql+psycopg://omh:omh-ci-only@127.0.0.1:5432/omh_migr
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: PGPASSWORD=omh-ci-only psql -h 127.0.0.1 -U omh -d omh_test -c "CREATE DATABASE omh_migr"
+      - run: uv run ruff check app tests
+      - run: uv run pytest -o addopts=""
+  web:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
