@@ -1,0 +1,24 @@
+# secrets & local data
+.env
+.env.*
+!.env.example
+*.sqlite3
+backend/omh-dev.sqlite3
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+# node
+node_modules/
+.next/
+out/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
+next-env.d.ts
+# logs
+*.log
+.runtime/
