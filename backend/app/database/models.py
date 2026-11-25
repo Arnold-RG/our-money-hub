@@ -127,7 +127,7 @@ class FinancialAccount(TimestampMixin, Base):
     color: Mapped[str | None] = mapped_column(String(16), nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     ledger_account_id: Mapped[str] = mapped_column(ForeignKey("ledger_accounts.id"))
-    __table_args__ = (CheckConstraint("currency in ('PLN','RWF','EUR','USD')", name="ck_acct_currency"),)
+    __table_args__ = (CheckConstraint("currency in ('PLN','RWF','EUR','USD','GBP')", name="ck_acct_currency"),)
 
 
 class LedgerAccount(Base):
@@ -211,7 +211,7 @@ class Transaction(TimestampMixin, Base):
         CheckConstraint("amount_minor > 0", name="ck_txn_positive"),
         CheckConstraint("kind in ('income','expense','transfer','opening','reversal')", name="ck_txn_kind"),
         CheckConstraint("status in ('confirmed','pending')", name="ck_txn_status"),
-        CheckConstraint("currency in ('PLN','RWF','EUR','USD')", name="ck_txn_currency"),
+        CheckConstraint("currency in ('PLN','RWF','EUR','USD','GBP')", name="ck_txn_currency"),
         UniqueConstraint("workspace_id", "import_hash", name="uq_txn_import_hash"),
         UniqueConstraint("workspace_id", "idempotency_key", name="uq_txn_idempotency"),
     )

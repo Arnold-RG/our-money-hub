@@ -3,20 +3,22 @@
  * No floating-point arithmetic is ever done on money in the browser: we format the decimal STRING,
  * and any sums the UI needs come from the API (which works in integer minor units).
  */
-export type Currency = "PLN" | "RWF" | "EUR" | "USD";
-export const CURRENCIES: Currency[] = ["PLN", "RWF", "EUR", "USD"];
-export const MINOR_UNITS: Record<Currency, number> = { PLN: 2, RWF: 0, EUR: 2, USD: 2 };
+export type Currency = "PLN" | "RWF" | "EUR" | "USD" | "GBP";
+export const CURRENCIES: Currency[] = ["PLN", "RWF", "EUR", "USD", "GBP"];
+export const MINOR_UNITS: Record<Currency, number> = { PLN: 2, RWF: 0, EUR: 2, USD: 2, GBP: 2 };
 export const CURRENCY_LABEL: Record<Currency, string> = {
   PLN: "Polish złoty",
   RWF: "Rwandan franc",
   EUR: "Euro",
   USD: "US dollar",
+  GBP: "Pound sterling",
 };
 const SYMBOL: Record<Currency, { s: string; after: boolean }> = {
   PLN: { s: "zł", after: true },
   RWF: { s: "RWF", after: true },
   EUR: { s: "€", after: false },
   USD: { s: "$", after: false },
+  GBP: { s: "£", after: false },
 };
 
 export interface Money {

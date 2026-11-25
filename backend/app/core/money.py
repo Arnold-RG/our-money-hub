@@ -18,12 +18,13 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal
 
 # ISO 4217 minor-unit exponents for supported currencies.
-CURRENCIES: dict[str, int] = {"PLN": 2, "EUR": 2, "USD": 2, "RWF": 0}
+CURRENCIES: dict[str, int] = {"PLN": 2, "EUR": 2, "USD": 2, "GBP": 2, "RWF": 0}
 CURRENCY_NAMES: dict[str, str] = {
     "PLN": "Polish złoty",
     "RWF": "Rwandan franc",
     "EUR": "Euro",
     "USD": "US dollar",
+    "GBP": "Pound sterling",
 }
 ROUNDING = ROUND_HALF_EVEN
 

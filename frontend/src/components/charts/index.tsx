@@ -80,15 +80,15 @@ export function CashflowChart({ series, currency }: { series: { month: string; i
               );
             }}
           />
-          <Bar dataKey="inc" radius={[6, 6, 2, 2]} fill="var(--arn-positive)" maxBarSize={26} />
-          <Bar dataKey="exp" radius={[6, 6, 2, 2]} fill="var(--omh-accent-2)" maxBarSize={26} />
+          <Bar dataKey="inc" radius={[6, 6, 2, 2]} fill="var(--credit)" maxBarSize={26} />
+          <Bar dataKey="exp" radius={[6, 6, 2, 2]} fill="var(--debit)" maxBarSize={26} />
         </BarChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-const DONUT = ["var(--omh-accent)", "var(--omh-accent-2)", "var(--arn-info)", "var(--arn-warning)", "var(--arn-positive)", "var(--arn-sage)", "var(--arn-caramel)", "var(--arn-faint)"];
+const DONUT = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)", "var(--info)", "var(--success)", "var(--faint)"];
 
 export function Donut({ rows, center }: { rows: { name: string; amount: Money }[]; center?: React.ReactNode }) {
   const data = rows.map((r) => ({ name: r.name, v: n(r.amount), m: r.amount }));
@@ -133,6 +133,43 @@ export function Ring({ value, size = 64, stroke = 7, tone = "accent", children }
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - v)} style={{ transition: "stroke-dashoffset 900ms cubic-bezier(.22,1,.36,1)" }} />
       </svg>
       <div className="absolute inset-0 grid place-items-center text-xs font-semibold">{children}</div>
+    </div>
+  );
+}
+
+export function CashflowArea({ series }: { series: { month: string; income: Money; expense: Money; net: Money }[] }) {
+  const data = series.map((s) => ({ ...s, inc: n(s.income), exp: n(s.expense), label: niceDate(s.month + "-01", { month: "short" }) }));
+  return (
+    <div className="h-40 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="inFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--credit)" stopOpacity={0.28} />
+              <stop offset="100%" stopColor="var(--credit)" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid vertical={false} stroke="var(--border)" />
+          <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: "var(--text2)", fontSize: 10.5 }} />
+          <YAxis hide />
+          <Tooltip
+            cursor={{ strokeDasharray: "3 3" }}
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null;
+              const d = payload[0].payload as (typeof data)[number];
+              return (
+                <Tip>
+                  <div className="text-faint">{d.label}</div>
+                  <div className="tnum credit-v">In {fmt(d.income)}</div>
+                  <div className="tnum debit-v">Out {fmt(d.expense)}</div>
+                </Tip>
+              );
+            }}
+          />
+          <Area type="monotone" dataKey="inc" name="Money in" stroke="var(--credit)" strokeWidth={2} fill="url(#inFill)" />
+          <Area type="monotone" dataKey="exp" name="Money out" stroke="var(--debit)" strokeWidth={2} strokeDasharray="6 4" fill="none" />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
 }

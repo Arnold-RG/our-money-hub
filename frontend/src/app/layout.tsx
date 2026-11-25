@@ -1,10 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Fraunces, Inter } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { AppProvider } from "@/providers/app-provider";
 
-const inter = Inter({ subsets: ["latin", "latin-ext"], variable: "--font-inter", display: "swap" });
-const fraunces = Fraunces({ subsets: ["latin", "latin-ext"], variable: "--font-fraunces", display: "swap", axes: ["opsz"] });
+const jakarta = Plus_Jakarta_Sans({ subsets: ["latin", "latin-ext"], variable: "--font-jakarta", display: "swap" });
 
 export const metadata: Metadata = {
   title: { default: "Our Money Hub", template: "%s · Our Money Hub" },
@@ -19,8 +18,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0f0b09" },
-    { media: "(prefers-color-scheme: light)", color: "#f7f1e8" },
+    { media: "(prefers-color-scheme: dark)", color: "#07100C" },
+    { media: "(prefers-color-scheme: light)", color: "#F2F6F3" },
   ],
 };
 
@@ -28,7 +27,7 @@ const themeScript = `(function(){try{var t=localStorage.getItem('omh.theme');if(
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" className={`${inter.variable} ${fraunces.variable}`} suppressHydrationWarning>
+    <html lang="en" data-app="omh" data-theme="dark" className={jakarta.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

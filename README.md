@@ -6,7 +6,7 @@ Created by Arnold Rurangwa / Arnova Group.
 
 ## What it does today
 
-- **Multi-currency ledger** for PLN, RWF, EUR and USD. Money is stored in integer minor units, every entry is double-entry balanced per currency, and posted history is append-only. Corrections are reversals, never edits.
+- **Multi-currency ledger** for PLN (default), RWF, EUR, USD and GBP. Money is stored in integer minor units, every entry is double-entry balanced per currency, and posted history is append-only. Corrections are reversals, never edits.
 - **Official exchange rates** from NBP (tables A and B, which include RWF), ECB reference rates and the National Bank of Rwanda. Each rate keeps its source, publication date and URL. A stale or missing rate is refused rather than guessed, and the amount is shown as "not converted".
 - **Accounts** for banks, cards, cash, MTN MoMo / Airtel Money wallets, ikimina shares, Ejo Heza, savings, investments, PPK, IKE and IKZE.
 - **Payments**: income, expenses, cross-currency transfers (the difference posts to FX clearing), pending status, CSV import with preview and duplicate protection, and CSV export with spreadsheet formulas neutralised.

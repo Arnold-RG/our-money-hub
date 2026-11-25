@@ -1,83 +1,171 @@
 /*
- * Arnova Ecosystem v2 — shared design tokens (RAGI + Our Money Hub).
+ * Arnova design tokens — Our Money Hub · A · Emerald ledger.
  * Created by Arnold Rurangwa / Arnova Group.
  *
- * Contrast: every text token reaches WCAG AA 4.5:1 (Forge review B3, 2026-11-25).
- * Palette is PENDING the owner's decision (spec §12 illustrative vs the live Arnova site vs logo C2):
- * swap the six brand values below and the accents — nothing else references raw colours.
- *
- * Palette from master spec §12. The spec calls these "illustrative" and asks
- * production to use the previously approved brand values — owner to confirm
- * (spec gap #25). Each app copies this file; do not import across repos.
- *
- * Product identity: RAGI uses --arn-accent = caramel; OMH may set
- * --arn-accent to soft green. Everything else is shared.
+ * Source of truth: style-refs/boards-v2/sets.py (Sky ops / Emerald ledger).
+ * Contrast: WCAG AA text ≥ 4.5:1, UI/chart ≥ 3:1, light budget-bar warning #CF4E08.
+ * No brown/cream palette, no orbs or glass blobs.
  */
 :root {
-  /* Brand */
-  --arn-chocolate: #302119;
-  --arn-forest: #193f30;
-  --arn-brown: #79533d;
-  --arn-caramel: #c38d58;
-  --arn-cream: #f5ead9;
-  --arn-sage: #72917c;
-
-  /* Type & shape */
-  --arn-font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --arn-font-display: "Fraunces", "Inter", ui-serif, Georgia, serif;
+  --arn-font-sans: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --arn-font-display: var(--arn-font-sans);
+  --arn-font-num: "Plus Jakarta Sans", ui-sans-serif, sans-serif;
   --arn-radius-sm: 10px;
-  --arn-radius: 16px;
-  --arn-radius-lg: 24px;
+  --arn-radius: 14px;
+  --arn-radius-lg: 18px;
   --arn-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --arn-blur: saturate(180%) blur(22px);
-  --arn-hit: 44px; /* house minimum touch target */
+  --arn-blur: saturate(160%) blur(18px);
+  --arn-hit: 44px;
   --arn-disabled: color-mix(in oklab, var(--arn-text) 38%, transparent);
+  --side-w: 248px;
+  --gap: 16px;
+  --pad: 24px;
+  --row: 40px;
 }
 
-/* Dark (default) */
+/* OMH A dark — Emerald ledger */
 :root,
 [data-theme="dark"] {
-  --arn-bg: #0f0b09;
-  --arn-bg-glow: radial-gradient(1200px 600px at 10% -10%, rgba(195, 141, 88, 0.14), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(25, 63, 48, 0.35), transparent 60%);
-  --arn-surface: #17110e;
-  --arn-surface-2: #201814;
-  --arn-surface-3: #2a201a;
-  --arn-border: rgba(245, 234, 217, 0.08);
-  --arn-border-strong: rgba(245, 234, 217, 0.16);
-  --arn-text: #f5ead9;
-  --arn-muted: rgba(245, 234, 217, 0.62);
-  --arn-faint: rgba(245, 234, 217, 0.58); /* 5.4:1 on surface-3 (Forge B3) */
-  --arn-accent: #c38d58;
-  --arn-accent-ink: #1a120c;
-  --arn-positive: #8fb49a;
-  --arn-warning: #e0b061;
-  --arn-danger: #e0796b;
-  --arn-info: #8ea8c3;
-  --arn-glass: rgba(23, 17, 14, 0.66);
-  --arn-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 50px -20px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+  --bg: #07100C;
+  --s1: #0D1813;
+  --s2: #122019;
+  --s3: #1A2C23;
+  --side: #0A140F;
+  --border: rgb(255 255 255 / .07);
+  --control-border: #67826F;
+  --text: #EEF6F1;
+  --text2: #AEC3B8;
+  --faint: #8BA497;
+  --side-text: #AEC3B8;
+  --side-active: #34D399;
+  --side-active-text: #04140C;
+  --primary: #34D399;
+  --primary-hover: #5EE0AE;
+  --on-primary: #04140C;
+  --cta-border: #34D399;
+  --primary-text: #5EE0AE;
+  --success: #A3E635;
+  --warning: #FBBF24;
+  --warning-text: #FBBF24;
+  --danger: #FF8A8A;
+  --info: #C4B5FD;
+  --focus: #5EE0AE;
+  --credit: #A3E635;
+  --debit: #FF8A8A;
+  --chart-muted: #2C3D34;
+  --bar-warning: #FBBF24;
+  --c1: #34D399;
+  --c2: #54B1FC;
+  --c3: #F59E0B;
+  --c4: #E879B9;
+  --c5: #9F7AEA;
+  --arn-bg: var(--bg);
+  --arn-bg-glow: none;
+  --arn-surface: var(--s1);
+  --arn-surface-2: var(--s2);
+  --arn-surface-3: var(--s3);
+  --arn-sidebar: var(--side);
+  --arn-border: var(--border);
+  --arn-border-strong: var(--control-border);
+  --arn-text: var(--text);
+  --arn-muted: var(--text2);
+  --arn-faint: var(--faint);
+  --arn-accent: var(--primary);
+  --arn-accent-ink: var(--on-primary);
+  --arn-positive: var(--success);
+  --arn-warning: var(--warning);
+  --arn-warning-text: var(--warning-text);
+  --arn-danger: var(--danger);
+  --arn-info: var(--info);
+  --arn-credit: var(--credit);
+  --arn-debit: var(--debit);
+  --arn-bar-warning: var(--bar-warning);
+  --arn-focus: var(--focus);
+  --arn-cta-border: var(--cta-border);
+  --arn-primary-text: var(--primary-text);
+  --arn-chart-muted: var(--chart-muted);
+  --arn-c1: var(--c1); --arn-c2: var(--c2); --arn-c3: var(--c3); --arn-c4: var(--c4); --arn-c5: var(--c5);
+  --arn-chocolate: var(--side);
+  --arn-forest: var(--success);
+  --arn-brown: var(--control-border);
+  --arn-caramel: var(--primary);
+  --arn-cream: var(--text);
+  --arn-sage: var(--success);
+  --arn-glass: color-mix(in srgb, var(--s1) 80%, transparent);
+  --arn-shadow: none;
 }
 
+/* OMH A light — Emerald ledger */
 [data-theme="light"] {
-  --arn-bg: #f7f1e8;
-  --arn-bg-glow: radial-gradient(1200px 600px at 10% -10%, rgba(195, 141, 88, 0.18), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(114, 145, 124, 0.18), transparent 60%);
-  --arn-surface: #fffdf9;
-  --arn-surface-2: #f4ece0;
-  --arn-surface-3: #eadfce;
-  --arn-border: rgba(48, 33, 25, 0.1);
-  --arn-border-strong: rgba(48, 33, 25, 0.2);
-  --arn-text: #302119;
-  --arn-muted: rgba(48, 33, 25, 0.72);
-  --arn-faint: rgba(48, 33, 25, 0.72); /* AA on bg + surface-3 (Forge B3) */
-  --arn-accent: #7f5530; /* 5.8:1 on bg; white text 6.2:1 */
-  --arn-accent-ink: #fffaf3;
-  --arn-positive: #2f6b4f;
-  --arn-warning: #7d5510;
-  --arn-danger: #a3402f;
-  --arn-info: #3f6385;
-  --arn-glass: rgba(255, 252, 247, 0.72);
-  --arn-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 20px 40px -24px rgba(48, 33, 25, 0.35);
+  color-scheme: light;
+  --bg: #F2F6F3;
+  --s1: #FFFFFF;
+  --s2: #F6F9F7;
+  --s3: #E0EAE4;
+  --side: #08231A;
+  --border: rgb(8 35 26 / .09);
+  --control-border: #71857B;
+  --text: #0A1F17;
+  --text2: #36493F;
+  --faint: #52665B;
+  --side-text: #C3D6CC;
+  --side-active: #34D399;
+  --side-active-text: #04140C;
+  --primary: #047857;
+  --primary-hover: #065F46;
+  --on-primary: #FFFFFF;
+  --cta-border: #047857;
+  --primary-text: #03684A;
+  --success: #3F6A0B;
+  --warning: #FFD08A;
+  --warning-text: #0A1F17;
+  --danger: #B4232F;
+  --info: #6D28D9;
+  --focus: #047857;
+  --credit: #3F6A0B;
+  --debit: #B4232F;
+  --chart-muted: #D3DED8;
+  --bar-warning: #CF4E08;
+  --c1: #065F46;
+  --c2: #2563EB;
+  --c3: #EA580C;
+  --c4: #C41A6E;
+  --c5: #64748B;
+  --arn-bg: var(--bg);
+  --arn-bg-glow: none;
+  --arn-surface: var(--s1);
+  --arn-surface-2: var(--s2);
+  --arn-surface-3: var(--s3);
+  --arn-sidebar: var(--side);
+  --arn-border: var(--border);
+  --arn-border-strong: var(--control-border);
+  --arn-text: var(--text);
+  --arn-muted: var(--text2);
+  --arn-faint: var(--faint);
+  --arn-accent: var(--primary);
+  --arn-accent-ink: var(--on-primary);
+  --arn-positive: var(--success);
+  --arn-warning: var(--warning);
+  --arn-warning-text: var(--warning-text);
+  --arn-danger: var(--danger);
+  --arn-info: var(--info);
+  --arn-credit: var(--credit);
+  --arn-debit: var(--debit);
+  --arn-bar-warning: var(--bar-warning);
+  --arn-focus: var(--focus);
+  --arn-cta-border: var(--cta-border);
+  --arn-primary-text: var(--primary-text);
+  --arn-chart-muted: var(--chart-muted);
+  --arn-c1: var(--c1); --arn-c2: var(--c2); --arn-c3: var(--c3); --arn-c4: var(--c4); --arn-c5: var(--c5);
+  --arn-chocolate: var(--side);
+  --arn-forest: var(--success);
+  --arn-brown: var(--control-border);
+  --arn-caramel: var(--primary);
+  --arn-cream: var(--text);
+  --arn-sage: var(--success);
+  --arn-glass: color-mix(in srgb, var(--s1) 80%, transparent);
+  --arn-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

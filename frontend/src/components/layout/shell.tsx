@@ -2,15 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "motion/react";
 import { Building2, ChevronDown, LogOut, Moon, Search, Sun, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/providers/app-provider";
 import { CURRENCIES, type Currency } from "@/lib/money";
 import { cx } from "@/components/ui";
-import { DOCK, NAV } from "./nav";
+import { GROUPS, MORE, NAV } from "./nav";
 import { Wordmark, Logo } from "./logo";
 import { CommandPalette } from "./command-palette";
+import { ChromeSlot } from "./PageChrome";
+import { useWs } from "@/lib/hooks";
+import type { BudgetView, Summary, Txn } from "@/lib/api";
+import { Plus } from "lucide-react";
 
 function WorkspaceSwitcher() {
   const { me, workspace, setWorkspaceId } = useApp();
@@ -66,16 +69,16 @@ function WorkspaceSwitcher() {
 export function CurrencyLens({ compact }: { compact?: boolean }) {
   const { currency, setCurrency } = useApp();
   return (
-    <div role="radiogroup" aria-label="Reporting currency" className="relative inline-flex rounded-full border border-line bg-surface-2 p-1 text-xs">
+    <div role="radiogroup" aria-label="Reporting currency" className={cx("seg", compact && "scale-95")}>
       {CURRENCIES.map((c) => (
         <button
           key={c}
           role="radio"
           aria-checked={c === currency}
+          aria-label={c}
           onClick={() => setCurrency(c as Currency)}
-          className={cx("relative z-10 rounded-full font-semibold tracking-wide transition-colors", compact ? "h-9 px-2.5" : "h-9 px-3", c === currency ? "text-accent-ink" : "text-muted hover:text-ink")}
+          className={c === currency ? "on" : ""}
         >
-          {c === currency && <motion.span layoutId="lens" className="absolute inset-0 -z-10 rounded-full bg-accent" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
           {c}
         </button>
       ))}
@@ -83,9 +86,15 @@ export function CurrencyLens({ compact }: { compact?: boolean }) {
   );
 }
 
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { me, theme, toggleTheme, signOut, setPaletteOpen } = useApp();
+  const { data: s } = useWs<Summary>("/reports/summary", true);
+  const { data: txns } = useWs<Txn[]>("/transactions?limit=100");
+  const pendingTx = (txns ?? []).filter((t) => t.status === "pending" || t.status === "failed").length;
+  const budgetAlerts = (s?.budgets ?? []).filter((b: BudgetView) => b.state !== "on_track").length;
+  const counts: Record<string, number> = { pending_txns: pendingTx, budget_alerts: budgetAlerts };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -96,96 +105,118 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [setPaletteOpen]);
+  const initials = me?.display_name?.split(" ").map((p) => p[0]).join("").slice(0, 2) ?? "AR";
 
   return (
-    <div className="min-h-dvh lg:pl-[272px]">
-      <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[80] focus:rounded-full focus:bg-accent focus:px-4 focus:py-2 focus:text-accent-ink">
+    <div className="app-shell">
+      <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[80] focus:rounded-md focus:bg-accent focus:px-4 focus:py-2 focus:text-accent-ink">
         Skip to content
       </a>
-      {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[272px] flex-col border-r border-line bg-surface/60 px-4 py-6 backdrop-blur-xl lg:flex">
-        <div className="px-2">
-          <Wordmark />
-        </div>
-        <nav aria-label="Main" className="mt-8 flex flex-1 flex-col gap-1">
-          {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href);
-            return (
-              <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cx("relative flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors", active ? "text-ink" : "text-muted hover:bg-surface-2 hover:text-ink")}>
-                {active && <motion.span layoutId="side-active" className="absolute inset-0 -z-0 rounded-xl border border-line-strong bg-surface-2" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
-                <Icon size={18} className={cx("relative", active && "text-accent")} />
-                <span className="relative">{label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="rounded-2xl border border-line bg-surface-2/60 p-3">
-          <div className="flex items-center gap-3">
-            <div className="grid size-9 place-items-center rounded-full bg-accent/15 text-sm font-semibold text-accent">{me?.display_name?.[0]?.toUpperCase() ?? "·"}</div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{me?.display_name}</div>
-              <div className="truncate text-xs text-faint">{me?.is_demo ? "Demo · private, empty" : me?.email}</div>
+      <aside className="side hidden lg:flex">
+        <div className="logo px-1 pb-4"><Wordmark /></div>
+        <div className="logo-type px-1 pb-3"><WorkspaceSwitcher /></div>
+        <nav aria-label="Main" className="flex-1 space-y-1 overflow-y-auto">
+          {GROUPS.map((g) => (
+            <div key={g}>
+              <div className="sec-label eyebrow px-3 pb-1.5 pt-3">{g}</div>
+              {NAV.filter((n) => n.group === g).map((n) => {
+                const { href, label, icon: Icon } = n;
+                const countKey = "countKey" in n ? n.countKey : undefined;
+                const active = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+                const count = countKey ? counts[countKey] : 0;
+                return (
+                  <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cx("nav-link", active && "on")} title={label}>
+                    <Icon size={18} strokeWidth={active ? 2.3 : 1.8} />
+                    <span className="logo-type">{label}</span>
+                    {count > 0 && <span className="cnt" aria-label={`${count} needing attention`}>{count}</span>}
+                  </Link>
+                );
+              })}
             </div>
-            <button onClick={signOut} className="grid size-11 place-items-center rounded-full text-muted hover:bg-surface-3 hover:text-ink" aria-label="Sign out">
-              <LogOut size={16} />
-            </button>
+          ))}
+        </nav>
+        <div className="me mt-auto flex items-center gap-2.5 border-t pt-3" style={{ borderColor: "var(--border)", color: "var(--side-text)" }}>
+          <div className="grid h-9 w-9 place-items-center rounded-[10px] text-xs font-bold" style={{ background: "var(--s3)", color: "var(--text)" }}>{initials}</div>
+          <div className="me-copy min-w-0 flex-1 text-xs">
+            <div className="truncate font-medium">{me?.display_name}</div>
+            <div className="truncate" style={{ color: "var(--side-text)" }}>{me?.is_demo ? "Demo · private" : me?.email}</div>
           </div>
+          <button onClick={signOut} className="grid size-9 place-items-center rounded-lg text-muted hover:text-ink" aria-label="Sign out"><LogOut size={16} /></button>
         </div>
-        <p className="mt-4 px-2 text-xs leading-relaxed text-faint">Created by Arnold Rurangwa / Arnova Group</p>
+        <p className="credit pt-2 text-[10.5px]" style={{ color: "var(--side-text)" }}>Created by Arnold Rurangwa / Arnova Group</p>
       </aside>
 
-      {/* Top bar */}
-      <header className="sticky top-0 z-30 border-b border-line bg-bg/70 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1240px] items-center gap-3 px-4 sm:px-6 lg:px-8">
-          <div className="lg:hidden">
-            <Logo size={30} />
-          </div>
-          <WorkspaceSwitcher />
-          <div className="flex-1" />
-          <button
-            onClick={() => setPaletteOpen(true)}
-            className="hidden h-11 w-64 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm text-faint hover:bg-surface-3 md:flex"
-            aria-label="Search (Ctrl+K)"
-          >
-            <Search size={15} />
-            <span className="flex-1 text-left">Search everything…</span>
-            <kbd className="rounded-md border border-line px-1.5 text-xs" aria-hidden>Ctrl K</kbd>
+      <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg)" }}>
+        <header className="top flex flex-wrap items-center gap-3 px-4 pt-4 md:px-6">
+          <div className="lg:hidden"><Logo size={32} /></div>
+          <ChromeSlot className="flex min-w-0 flex-1 items-center gap-3" />
+          <button onClick={() => setPaletteOpen(true)} className="search-field hidden md:flex" aria-label="Search (Ctrl+K)">
+            <Search size={16} />
+            <span className="flex-1 text-left">Search…</span>
+            <span className="kbd">⌘K</span>
           </button>
-          <button onClick={() => setPaletteOpen(true)} className="grid size-11 place-items-center rounded-full border border-line bg-surface-2 text-muted md:hidden" aria-label="Search">
-            <Search size={17} />
+          <div className="order-last w-full overflow-x-auto sm:order-none sm:w-auto"><CurrencyLens compact /></div>
+          <button onClick={toggleTheme} className="btn icon" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-          <div className="hidden sm:block">
-            <CurrencyLens />
-          </div>
-          <button onClick={toggleTheme} className="grid size-11 place-items-center rounded-full border border-line bg-surface-2 text-muted hover:text-ink" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
-            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-          </button>
-        </div>
-      </header>
+        </header>
+        <main id="main" className="dock-safe flex min-h-0 flex-1 flex-col gap-4 px-4 pt-4 md:px-6">{children}</main>
+      </div>
 
-      <main id="main" className="dock-safe mx-auto max-w-[1240px] px-4 pt-6 sm:px-6 lg:px-8">
-        <motion.div key={pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
-          {children}
-        </motion.div>
-        <footer className="mt-14 hidden border-t border-line py-6 text-xs text-faint lg:block">Our Money Hub · Created by Arnold Rurangwa / Arnova Group</footer>
-      </main>
-
-      {/* Mobile translucent dock (smartphones only) */}
-      <nav aria-label="Main" className="fixed inset-x-3 bottom-[max(12px,env(safe-area-inset-bottom))] z-40 lg:hidden">
-        <div className="glass mx-auto flex max-w-md items-center justify-between rounded-[26px] px-2 py-1.5 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.55)]">
-          {DOCK.map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href) || (href === "/more" && ["/accounts", "/subscriptions", "/reports", "/settings"].some((p) => pathname.startsWith(p)));
-            return (
-              <Link key={href} href={href} aria-current={active ? "page" : undefined} className="relative flex h-14 min-w-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded-[20px] text-xs font-medium">
-                {active && <motion.span layoutId="dock-active" className="absolute inset-1 rounded-[18px] bg-accent/15" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
-                <Icon size={21} className={cx("relative", active ? "text-accent" : "text-muted")} strokeWidth={active ? 2.3 : 1.8} />
-                <span className={cx("relative", active ? "text-ink" : "text-muted")}>{label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
+      <MobileDock onSearch={() => setPaletteOpen(true)} budgetAlerts={budgetAlerts} />
       <CommandPalette />
     </div>
+  );
+}
+
+function MobileDock({ onSearch, budgetAlerts }: { onSearch: () => void; budgetAlerts: number }) {
+  const pathname = usePathname();
+  const [more, setMore] = useState(false);
+  const HomeIcon = NAV[0].icon;
+  const ActivityIcon = NAV[2].icon;
+  const BudgetIcon = NAV[3].icon;
+  return (
+    <>
+      <nav aria-label="Main" className="tabbar lg:hidden">
+        <Link href="/dashboard" className={cx("tab", pathname === "/dashboard" && "on")} aria-current={pathname === "/dashboard" ? "page" : undefined}>
+          <HomeIcon size={18} /><span className="tab-label">Home</span>
+        </Link>
+        <Link href="/transactions" className={cx("tab", pathname.startsWith("/transactions") && "on")} aria-current={pathname.startsWith("/transactions") ? "page" : undefined}>
+          <ActivityIcon size={18} /><span className="tab-label">Activity</span>
+        </Link>
+        <button type="button" className="tab" aria-label="Add" onClick={() => setMore(true)}>
+          <span className="tab-new grid place-items-center"><Plus size={22} strokeWidth={2.4} /></span>
+        </button>
+        <Link href="/budgets" className={cx("tab", pathname.startsWith("/budgets") && "on")} aria-current={pathname.startsWith("/budgets") ? "page" : undefined}>
+          <span className="relative">
+            <BudgetIcon size={18} />
+            {budgetAlerts > 0 && <span className="tbadge">{budgetAlerts}</span>}
+          </span>
+          <span className="tab-label">Budgets</span>
+        </Link>
+        <button type="button" className="tab" aria-label="Search" onClick={onSearch}>
+          <Search size={18} /><span className="tab-label">Search</span>
+        </button>
+      </nav>
+      {more && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-3 lg:hidden" onClick={() => setMore(false)}>
+          <div className="card w-full max-w-md p-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Create or go to">
+            <div className="mb-3 flex gap-2">
+              <Link href="/transactions" className="btn btn-primary flex-1" onClick={() => setMore(false)}>Add payment</Link>
+              <Link href="/accounts" className="btn flex-1" onClick={() => setMore(false)}>Add account</Link>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {MORE.map((n) => (
+                <Link key={n.href} href={n.href} onClick={() => setMore(false)} className="flex min-h-[72px] flex-col items-center justify-center gap-1 rounded-xl border border-line bg-surface-2 p-2 text-center text-xs">
+                  <n.icon size={18} style={{ color: "var(--primary-text)" }} />
+                  {n.label}
+                </Link>
+              ))}
+            </div>
+            <button className="btn mt-3 w-full" onClick={() => setMore(false)}>Close</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

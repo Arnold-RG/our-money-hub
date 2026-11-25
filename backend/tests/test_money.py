@@ -45,7 +45,11 @@ def test_never_add_different_currencies():
 
 def test_unsupported_currency():
     with pytest.raises(MoneyError):
-        Money(1, "GBP")
+        Money(1, "XXX")
+
+
+def test_gbp_has_two_decimals():
+    assert str(Money(1250, "GBP")) == "12.50 GBP"
 
 
 def test_rwf_has_no_minor_unit():

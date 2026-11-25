@@ -160,7 +160,7 @@ def _store(db: Session, *, base: str, quote: str, rate: Decimal, eff: date, sour
 
 
 def sync_nbp(db: Session, client: httpx.Client) -> list[ExchangeRate]:
-    """Official NBP mids vs PLN: EUR, USD from table A (daily), RWF from table B (weekly)."""
+    """Official NBP mids vs PLN: EUR, USD, GBP from table A (daily), RWF from table B (weekly)."""
     s = get_settings()
     out = []
     for code in CURRENCIES:

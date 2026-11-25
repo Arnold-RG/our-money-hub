@@ -2,296 +2,175 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { motion } from "motion/react";
-import { AlertTriangle, ArrowDownRight, ArrowLeftRight, ArrowUpRight, Bot, CalendarClock, Gauge, Info, Landmark, Plus, Repeat, Sparkles, Wallet } from "lucide-react";
-import type { BudgetView, Forecast, Rate, Signal, Summary, Txn } from "@/lib/api";
+import { AlertTriangle, ArrowLeftRight, Gauge } from "lucide-react";
+import type { BudgetView, Sub, Summary, Txn } from "@/lib/api";
 import { useWs } from "@/lib/hooks";
 import { useApp } from "@/providers/app-provider";
-import { fmt, formatAmount, pct, type Money } from "@/lib/money";
+import { fmt, type Currency, type Money } from "@/lib/money";
 import { niceDate } from "@/lib/labels";
-import { Badge, Button, Card, EmptyState, Modal, SectionTitle, Skeleton, cx } from "@/components/ui";
-import { CountUp } from "@/components/finance/count-up";
-import { PulseChart, Ring } from "@/components/charts";
-import { CurrencyLens } from "@/components/layout/shell";
+import { EmptyState, Modal, Skeleton } from "@/components/ui";
+import { CashflowArea } from "@/components/charts";
 import { AccountForm, SubForm, TxnForm } from "@/components/finance/forms";
+import { PageHeader } from "@/components/finance/page-header";
+import { FilterBar } from "@/components/ui/FilterBar";
+import { KpiCard } from "@/components/ui/KpiCard";
 
-function greeting() {
-  const h = new Date().getHours();
-  return h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-}
+interface Cashflow { currency: Currency; series: { month: string; income: Money; expense: Money; net: Money }[]; unconverted: string[] }
 
-function Metric({ label, value, icon, tone, hint, delay = 0 }: { label: string; value: Money | null | undefined; icon: React.ReactNode; tone?: "pos" | "neg"; hint?: string; delay?: number }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, duration: 0.4 }} className="card p-4 sm:p-5">
-      <div className="flex items-center justify-between text-xs font-medium text-muted">
-        {label}
-        <span className="grid size-8 place-items-center rounded-xl bg-surface-3 text-accent">{icon}</span>
-      </div>
-      <div className={cx("tnum mt-3 text-[22px] font-semibold tracking-tight sm:text-2xl", tone === "neg" && "text-accent-2", tone === "pos" && "text-positive")}>{value ? fmt(value, { sign: tone !== undefined }) : "—"}</div>
-      {hint && <div className="mt-1 text-xs text-faint">{hint}</div>}
-    </motion.div>
-  );
-}
-
-function SignalRow({ s }: { s: Signal }) {
-  const Icon = s.type.includes("rate") ? Landmark : s.type.includes("renewal") ? CalendarClock : s.type.includes("budget") ? Gauge : s.type.includes("duplicate") ? Repeat : Info;
-  return (
-    <li className="flex gap-3 rounded-2xl border border-line bg-surface-2/60 p-3.5">
-      <span className={cx("grid size-9 shrink-0 place-items-center rounded-xl", s.severity === "danger" ? "bg-danger/15 text-danger" : s.severity === "warning" ? "bg-warning/15 text-warning" : "bg-info/15 text-info")}>
-        <Icon size={16} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-sm font-medium">{s.title}</p>
-        <p className="mt-0.5 text-xs text-muted">{s.detail}</p>
-      </div>
-    </li>
-  );
-}
-
-function RatesCard() {
-  const { data: rates } = useWs<Rate[]>("/exchange-rates");
-  const pick = (b: string, q: string) => rates?.filter((r) => r.base === b && r.quote === q).sort((a, z) => (a.provider === "manual" ? -1 : 0) - (z.provider === "manual" ? -1 : 0) || z.effective_date.localeCompare(a.effective_date))[0];
-  const rows = [pick("EUR", "PLN"), pick("USD", "PLN"), pick("RWF", "PLN") ?? pick("PLN", "RWF"), pick("USD", "RWF")].filter(Boolean) as Rate[];
-  return (
-    <Card>
-      <SectionTitle title="Official exchange rates" hint="Mid rates as published, never guessed" action={<Link href="/settings#rates" className="hit inline-flex items-center text-xs font-medium text-accent">Sources</Link>} />
-      {!rates ? (
-        <Skeleton className="h-28" />
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-muted">No rates on file yet. Sync NBP, ECB and BNR from Settings.</p>
-      ) : (
-        <ul className="divide-y divide-line">
-          {rows.map((r) => (
-            <li key={r.id} className="flex items-center justify-between py-2.5 text-sm">
-              <span className="font-medium">
-                1 {r.base} <span className="text-faint">→</span> {r.quote}
-              </span>
-              <span className="text-right">
-                <span className="tnum block font-semibold">{r.rate.replace(/0+$/, "").replace(/\.$/, "")}</span>
-                <span className="block text-xs text-faint">
-                  {r.provider.toUpperCase()} · {niceDate(r.effective_date)}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function Onboarding({ onAdd }: { onAdd: (k: "account" | "txn" | "sub") => void }) {
-  const steps = [
-    { k: "account" as const, icon: Wallet, t: "Add an account", d: "Bank, card, cash, MTN MoMo or Airtel Money, ikimina, IKE/IKZE. Any of PLN, RWF, EUR, USD." },
-    { k: "txn" as const, icon: ArrowLeftRight, t: "Record a payment", d: "Income, expense or a transfer between currencies. Or import a CSV from your bank." },
-    { k: "sub" as const, icon: Repeat, t: "Track a subscription", d: "AI tools, hosting, domains and client plans. Renewals and duplicates surface here." },
-  ];
-  return (
-    <div className="grid gap-3 md:grid-cols-3">
-      {steps.map(({ k, icon: Icon, t, d }, i) => (
-        <motion.button key={k} onClick={() => onAdd(k)} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 + i * 0.07 }} className="card group flex flex-col items-start p-5 text-left transition hover:border-line-strong">
-          <span className="flex w-full items-center justify-between">
-            <span className="grid size-10 place-items-center rounded-2xl bg-accent/12 text-accent">
-              <Icon size={18} />
-            </span>
-            <span className="text-xs font-semibold text-faint">STEP {i + 1}</span>
-          </span>
-          <span className="mt-4 text-[15px] font-semibold">{t}</span>
-          <span className="mt-1 text-sm text-muted">{d}</span>
-          <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-accent">
-            <Plus size={15} /> Start
-          </span>
-        </motion.button>
-      ))}
-    </div>
-  );
+function budgetFill(state: BudgetView["state"]) {
+  if (state === "exceeded") return "var(--danger)";
+  if (state === "warning") return "var(--bar-warning)";
+  return "var(--c1)";
 }
 
 export default function Dashboard() {
-  const { me, workspace, currency } = useApp();
+  const { workspace, currency } = useApp();
   const { data: s, error } = useWs<Summary>("/reports/summary", true);
-  const { data: fc } = useWs<Forecast>("/reports/forecast?days=90", true);
-  const { data: signals } = useWs<Signal[]>("/reports/signals", true);
-  const { data: txns } = useWs<Txn[]>("/transactions?limit=6");
+  const { data: txns } = useWs<Txn[]>("/transactions?limit=20");
+  const { data: subs } = useWs<Sub[]>("/subscriptions");
   const [add, setAdd] = useState<null | "account" | "txn" | "sub">(null);
-  const first = me?.display_name?.split(" ")[0];
-
-  const ratesCaption = s && Object.keys(s.rates_used).length > 0
-    ? Object.entries(s.rates_used).map(([k, v]) => `${k} ${v.source}${v.effective_date ? " " + niceDate(v.effective_date) : ""}`).join(" · ")
+  const [months, setMonths] = useState<"1" | "3" | "6" | "12">("6");
+  const { data: flow } = useWs<Cashflow>(`/reports/cashflow?months=${months === "1" ? "3" : months}`, true);
+  const rateNote = s && Object.keys(s.rates_used).length > 0
+    ? Object.entries(s.rates_used).map(([k, v]) => `${k} at ${v.source}${v.effective_date ? ", " + niceDate(v.effective_date) : ""}`).join(" · ")
     : null;
+  const inSeries = flow?.series.map((r) => r.income.minor) ?? [];
+  const outSeries = flow?.series.map((r) => r.expense.minor) ?? [];
+  const netSeries = flow?.series.map((r) => r.net.minor) ?? [];
+  const empty = s && !s.has_data;
+  const shownTx = (txns ?? []).slice(0, 5);
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Money Pulse hero */}
-      <section className="card relative overflow-hidden p-5 sm:p-8">
-        <div className="aurora" aria-hidden />
-        <div className="grid-bg absolute inset-0" aria-hidden />
-        <div className="relative">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Money Pulse · {workspace?.name}</p>
-              <h1 className="display mt-1 text-[26px] sm:text-[32px]">
-                {greeting()}
-                {first ? `, ${first}` : ""}.
-              </h1>
+    <>
+      <PageHeader
+        title="Money overview"
+        subtitle={`${workspace?.name ?? "Workspace"} · ${s?.month ?? ""}${s && !s.has_data ? " · empty" : ""}`}
+        actions={<button className="btn btn-primary" onClick={() => setAdd("txn")}>+ Add payment</button>}
+      />
+      {error && <p role="alert" className="text-sm text-danger">Could not load this workspace.</p>}
+      {!s && !error && <div className="kpis">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-28" />)}</div>}
+      {s && (
+        <>
+          {empty && (
+            <div className="card p-6">
+              <h2 className="m-0 text-base font-bold">Your hub is empty and honest</h2>
+              <p className="mt-1 text-sm text-muted">No sample figures. Add an account or a payment to see balances, cash flow and budgets here.</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="btn btn-primary" onClick={() => setAdd("account")}>Add account</button>
+                <button className="btn" onClick={() => setAdd("txn")}>Add payment</button>
+              </div>
             </div>
-            <div className="sm:hidden">
-              <CurrencyLens compact />
+          )}
+          <div className="kpis">
+            <KpiCard hero label="Total balance" value={!empty && s.total_balance ? fmt(s.total_balance) : "—"}
+              series={empty ? [] : netSeries} sparkColor="var(--credit)" period="in this currency" />
+            <KpiCard label="Money in" value={!empty && s.monthly_revenue && s.monthly_revenue.minor !== 0 ? <span className="credit-v">+{fmt(s.monthly_revenue)}</span> : "—"}
+              series={empty ? [] : inSeries} sparkColor="var(--credit)" period="this month" />
+            <KpiCard label="Money out" value={!empty && s.monthly_expenses && s.monthly_expenses.minor !== 0 ? <span className="debit-v">−{fmt(s.monthly_expenses)}</span> : "—"}
+              series={empty ? [] : outSeries} sparkColor="var(--debit)" period="this month" />
+            <KpiCard label="Net this month" value={!empty && s.net_cash_flow && s.net_cash_flow.minor !== 0 ? <span className={s.net_cash_flow.minor >= 0 ? "credit-v" : "debit-v"}>{fmt(s.net_cash_flow, { sign: true })}</span> : "—"}
+              series={empty ? [] : netSeries} sparkColor="var(--c3)" period="income minus spending" />
+          </div>
+          {s.unconverted.length > 0 && (
+            <p className="text-xs" style={{ color: "var(--warning-text)" }}><AlertTriangle size={12} className="inline" /> {s.unconverted.join(", ")} not converted — shown in their own currency only.</p>
+          )}
+
+          <div className="flex flex-col gap-4 lg:flex-row">
+            <div className="card flex-1 p-4" style={{ flex: 1.6 }}>
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="m-0 text-sm font-bold">Cash flow</h3>
+                <span className="faint text-xs">{currency}</span>
+                <span className="flex-1" />
+                <div className="seg" role="radiogroup" aria-label="Cash flow range">
+                  {(["1", "3", "6", "12"] as const).map((m) => (
+                    <button key={m} type="button" role="radio" aria-checked={months === m} className={months === m ? "on" : ""} onClick={() => setMonths(m)}>{m === "12" ? "1Y" : `${m}M`}</button>
+                  ))}
+                </div>
+              </div>
+              {!flow ? <Skeleton className="h-40" /> : flow.series.every((r) => r.income.minor === 0 && r.expense.minor === 0) ? (
+                <EmptyState icon={<ArrowLeftRight size={18} />} title="No cash flow yet" body="Confirmed income and expenses appear here month by month." />
+              ) : (
+                <>
+                  <CashflowArea series={flow.series} />
+                  <div className="legend mt-1">
+                    <span><i style={{ background: "var(--credit)" }} /> Money in (solid)</span>
+                    <span><i style={{ background: "var(--debit)" }} /> Money out (dashed)</span>
+                    <span className="flex-1" />
+                    <Link href="/reports" className="text-xs" style={{ color: "var(--text2)" }}>View as table</Link>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="card flex-1 p-4">
+              <div className="mb-1 flex items-center gap-2">
+                <h3 className="m-0 text-sm font-bold">Budgets · {s.month}</h3>
+                <span className="flex-1" />
+              </div>
+              {(s.budgets ?? []).length === 0 ? (
+                <EmptyState icon={<Gauge size={18} />} title="No budgets yet" body="Set a category or AI budget to track spending against a limit." action={<Link href="/budgets" className="btn">Add</Link>} />
+              ) : (s.budgets ?? []).slice(0, 4).map((b) => {
+                const u = Math.round(Number(b.committed_utilization) * 100);
+                const fill = budgetFill(b.state);
+                const pill = b.state === "exceeded" ? { cls: "err", label: `Over · ${Math.max(u - 100, 0)}%` } : b.state === "warning" ? { cls: "warn", label: `Alert · ${u}%` } : { cls: "ok", label: "On track" };
+                return (
+                  <div key={b.id} className="grid gap-1 border-b py-1.5" style={{ borderColor: "var(--border)" }}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <b className="font-semibold">{b.name}</b>
+                      <span className="faint num text-[11.5px]">{fmt(b.actual)} / {fmt(b.allocated)} · {u}%</span>
+                      <span className="flex-1" />
+                      <span className={`pill ${pill.cls}`}>{pill.label}</span>
+                    </div>
+                    <div className="bar-track"><i style={{ width: `${Math.min(u, 100)}%`, background: fill }} /></div>
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2 pt-2 text-[12.5px]" style={{ color: "var(--text2)" }}>
+                <span>{(subs ?? []).length === 0 ? "No subscriptions tracked yet" : `${subs?.length} subscription${subs && subs.length === 1 ? "" : "s"}`}</span>
+                <span className="flex-1" />
+                <button className="btn" style={{ minHeight: 32, fontSize: 12 }} onClick={() => setAdd("sub")}>+ Add</button>
+              </div>
             </div>
           </div>
-          {!s && !error ? (
-            <div className="mt-6 space-y-3">
-              <Skeleton className="h-12 w-64" />
-              <Skeleton className="h-44" />
-            </div>
-          ) : s && s.total_balance ? (
-            <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] lg:items-end">
-              <div>
-                <p className="text-sm text-muted">Total balance in {currency}</p>
-                <CountUp value={s.total_balance} className="tnum display mt-1 block text-[44px] leading-none sm:text-[56px]" />
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Badge tone={s.net_cash_flow.minor >= 0 ? "positive" : "warning"}>
-                    {s.net_cash_flow.minor >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                    {formatAmount(s.net_cash_flow.amount, s.currency, { sign: true })} this month
-                  </Badge>
-                  {s.pending_balance && s.pending_balance.minor !== 0 && <Badge tone="info">{fmt(s.pending_balance)} pending</Badge>}
-                  {s.unconverted.length > 0 && (
-                    <Badge tone="warning">
-                      <AlertTriangle size={12} /> {s.unconverted.join(", ")} not converted
-                    </Badge>
-                  )}
-                </div>
-                {fc?.status === "ok" && fc.end && (
-                  <p className="mt-4 max-w-sm text-sm text-muted">
-                    In 90 days, about <span className="tnum font-semibold text-ink">{fmt(fc.end)}</span>
-                    {fc.lowest && fc.lowest.balance.minor < (fc.start?.minor ?? 0) && (
-                      <>
-                        , lowest <span className="tnum font-semibold text-ink">{fmt(fc.lowest.balance)}</span> on {niceDate(fc.lowest.date)}
-                      </>
-                    )}
-                    . <span className="text-faint">Forecast, not a confirmed figure.</span>
-                  </p>
-                )}
-              </div>
-              <div>
-                {fc?.status === "ok" && fc.points.length > 1 ? (
-                  <PulseChart points={fc.points} events={fc.events} />
-                ) : (
-                  <div className="grid h-[220px] place-items-center rounded-2xl border border-dashed border-line-strong text-sm text-muted">The 90-day pulse appears once there is activity.</div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="mt-5">
-              <p className="max-w-xl text-[15px] text-muted">
-                Your hub is empty and honest: nothing here is invented. Add your first account and the Money Pulse comes alive with a balance, a 90-day forecast and renewal markers.
-              </p>
-            </div>
-          )}
-          {ratesCaption && <p className="relative mt-4 text-xs text-faint">Converted at {ratesCaption}</p>}
-        </div>
-      </section>
 
-      {s && !s.has_data && <Onboarding onAdd={setAdd} />}
-
-      {s?.has_data && (
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Metric label="Income this month" value={s.monthly_revenue} icon={<ArrowUpRight size={15} />} delay={0.02} />
-          <Metric label="Spent this month" value={s.monthly_expenses} icon={<ArrowDownRight size={15} />} delay={0.06} />
-          <Metric label="Subscriptions / month" value={s.subscriptions_monthly} icon={<Repeat size={15} />} hint={`${fmt(s.subscriptions_annual)} a year`} delay={0.1} />
-          <Metric label="AI operating cost" value={s.ai_operating_cost} icon={<Bot size={15} />} hint="Plans + usage this month" delay={0.14} />
-        </section>
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-6">
-          <Card>
-            <SectionTitle title="Hub signals" hint="What needs a look, worked out from your own records" />
-            {!signals ? (
-              <Skeleton className="h-24" />
-            ) : signals.length === 0 ? (
-              <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface-2/60 p-4 text-sm text-muted">
-                <Sparkles size={18} className="text-accent" /> All quiet. Renewals, duplicate subscriptions, budget limits and missing rates show up here.
-              </div>
+          <div className="card p-4">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <h3 className="m-0 text-sm font-bold">Recent transactions</h3>
+              <span className="faint text-xs">{shownTx.length ? `Latest ${shownTx.length}${txns && txns.length > 5 ? " of many" : ""}` : "None yet"}</span>
+              <span className="flex-1" />
+              {rateNote && <span className="faint text-[11.5px]">{rateNote}</span>}
+              <Link href="/transactions" className="linkish">See all</Link>
+            </div>
+            <FilterBar storageKey="omh-tx-view">
+              <span className="chip">Search transactions…</span>
+              <span className="chip">Category</span>
+              <span className="chip">Account</span>
+              <span className="chip">Currency: {currency}</span>
+            </FilterBar>
+            {!txns ? <Skeleton className="h-40" /> : shownTx.length === 0 ? (
+              <EmptyState icon={<ArrowLeftRight size={18} />} title="No transactions yet" body="Payments you add will be listed here, with their real dates and amounts." />
             ) : (
-              <ul className="flex flex-col gap-2.5">{signals.slice(0, 6).map((x, i) => <SignalRow key={x.type + i} s={x} />)}</ul>
-            )}
-          </Card>
-          <Card>
-            <SectionTitle title="Recent activity" action={<Link href="/transactions" className="hit inline-flex items-center text-xs font-medium text-accent">See all</Link>} />
-            {!txns ? (
-              <Skeleton className="h-32" />
-            ) : txns.length === 0 ? (
-              <EmptyState icon={<ArrowLeftRight size={20} />} title="No payments yet" body="Payments you record or import appear here, newest first." action={<Button onClick={() => setAdd("txn")} icon={<Plus size={15} />}>Add payment</Button>} />
-            ) : (
-              <ul className="divide-y divide-line">
-                {txns.slice(0, 6).map((t) => (
-                  <li key={t.id} className="flex items-center gap-3 py-3">
-                    <span className={cx("grid size-9 shrink-0 place-items-center rounded-xl", t.kind === "income" ? "bg-positive/15 text-positive" : t.kind === "expense" ? "bg-accent-2/15 text-accent-2" : "bg-info/15 text-info")}>
-                      {t.kind === "income" ? <ArrowUpRight size={16} /> : t.kind === "expense" ? <ArrowDownRight size={16} /> : <ArrowLeftRight size={16} />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{t.description}</p>
-                      <p className="truncate text-xs text-faint">
-                        {niceDate(t.date)} · {t.account}
-                        {t.category ? ` · ${t.category}` : ""}
-                        {t.status === "pending" ? " · pending" : ""}
-                      </p>
-                    </div>
-                    <span className={cx("tnum text-sm font-semibold", t.kind === "income" && "text-positive")}>{fmt(t.amount, { sign: t.kind === "income" })}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-        </div>
-        <div className="flex flex-col gap-6">
-          {s?.has_data && (
-            <Card>
-              <SectionTitle title="Budgets this month" action={<Link href="/budgets" className="hit inline-flex items-center text-xs font-medium text-accent">Manage</Link>} />
-              {s.budgets.length === 0 ? (
-                <p className="text-sm text-muted">No budgets yet. Set one for a category, or guard your AI spend.</p>
-              ) : (
-                <ul className="flex flex-col gap-4">
-                  {s.budgets.slice(0, 4).map((b: BudgetView) => {
-                    const u = Number(b.committed_utilization);
+              <table className="data-table">
+                <thead><tr><th>Date / ID</th><th>Description</th><th>Category</th><th className="r">Amount</th><th>Status</th></tr></thead>
+                <tbody>
+                  {shownTx.map((t) => {
+                    const dir = t.kind === "income" ? "in" : "out";
+                    const st = t.status === "pending" ? "warn" : t.status === "failed" || t.status === "reversed" ? "err" : "ok";
                     return (
-                      <li key={b.id} className="flex items-center gap-3">
-                        <Ring value={u} size={48} stroke={5} tone={b.state === "exceeded" ? "danger" : b.state === "warning" ? "warning" : "accent"}>
-                          {pct(b.committed_utilization)}
-                        </Ring>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{b.name}</p>
-                          <p className="tnum text-xs text-faint">
-                            {fmt(b.available)} left of {fmt(b.allocated)}
-                          </p>
-                        </div>
-                      </li>
+                      <tr key={t.id}>
+                        <td><span className="num">{niceDate(t.date)}</span> <span className="faint num text-[11.5px]">{t.id.slice(0, 8)}</span></td>
+                        <td><b className="font-semibold">{t.description}</b> {t.payee && <span className="muted">· {t.payee}</span>}</td>
+                        <td>{t.category ? <span className="lbl"><i style={{ background: "var(--c1)" }} />{t.category}</span> : "—"}</td>
+                        <td className={`r num font-bold ${dir === "in" ? "credit-v" : "debit-v"}`}>{dir === "in" ? "+" : "−"}{fmt(t.amount)}</td>
+                        <td><span className={`pill ${st}`}>{t.status}</span></td>
+                      </tr>
                     );
                   })}
-                </ul>
-              )}
-            </Card>
-          )}
-          {s?.has_data && s.accounts.length > 0 && (
-            <Card>
-              <SectionTitle title="Accounts" action={<Link href="/accounts" className="hit inline-flex items-center text-xs font-medium text-accent">All</Link>} />
-              <ul className="flex flex-col gap-2">
-                {s.accounts.slice(0, 5).map((a) => (
-                  <li key={a.account_id} className="flex items-center justify-between rounded-xl px-1 py-1.5 text-sm">
-                    <span className="truncate font-medium">{a.name}</span>
-                    <span className="tnum text-right">
-                      <span className="block font-semibold">{fmt(a.balance)}</span>
-                      {a.converted && a.currency !== currency && <span className="block text-xs text-faint">≈ {fmt(a.converted)}</span>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
-          <RatesCard />
-        </div>
-      </div>
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
       <Modal open={add === "account"} onClose={() => setAdd(null)} title="New account">
         <AccountForm onDone={() => setAdd(null)} />
@@ -302,6 +181,6 @@ export default function Dashboard() {
       <Modal open={add === "sub"} onClose={() => setAdd(null)} title="New subscription" wide>
         <SubForm onDone={() => setAdd(null)} />
       </Modal>
-    </div>
+    </>
   );
 }

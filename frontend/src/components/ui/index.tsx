@@ -179,7 +179,7 @@ export function Progress({ value, tone = "accent", label }: { value: number; ton
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-surface-3" role="progressbar" aria-label={label} aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={100}>
       <motion.div
-        className={cx("h-full rounded-full", tone === "accent" && "bg-accent", tone === "warning" && "bg-warning", tone === "danger" && "bg-danger")}
+        className={cx("h-full rounded-full", tone === "accent" && "bg-accent", tone === "warning" && "bg-[var(--bar-warning)]", tone === "danger" && "bg-danger")}
         initial={{ width: 0 }}
         animate={{ width: `${w}%` }}
         transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}

@@ -1,29 +1,32 @@
-import { ArrowLeftRight, Bot, ChartNoAxesCombined, Gauge, LayoutDashboard, Landmark, MoreHorizontal, Repeat, Settings, Wallet } from "lucide-react";
+import { ArrowLeftRight, Bot, ChartNoAxesCombined, Gauge, LayoutDashboard, Landmark, Plus, Repeat, Search, Settings, Wallet } from "lucide-react";
 
 export const NAV = [
-  { href: "/dashboard", label: "Home", icon: LayoutDashboard },
-  { href: "/accounts", label: "Accounts", icon: Wallet },
-  { href: "/transactions", label: "Payments", icon: ArrowLeftRight },
-  { href: "/budgets", label: "Budgets", icon: Gauge },
-  { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
-  { href: "/ai", label: "AI spend", icon: Bot },
-  { href: "/reports", label: "Reports", icon: ChartNoAxesCombined },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard", label: "Home", icon: LayoutDashboard, group: "Money" },
+  { href: "/accounts", label: "Accounts", icon: Wallet, group: "Money" },
+  { href: "/transactions", label: "Transactions", icon: ArrowLeftRight, group: "Money", countKey: "pending_txns" },
+  { href: "/budgets", label: "Budgets", icon: Gauge, group: "Money", countKey: "budget_alerts" },
+  { href: "/subscriptions", label: "Subscriptions", icon: Repeat, group: "Money" },
+  { href: "/reports", label: "Reports", icon: ChartNoAxesCombined, group: "Insight" },
+  { href: "/ai", label: "AI spend", icon: Bot, group: "Insight" },
+  { href: "/settings", label: "Settings", icon: Settings, group: "Insight" },
 ] as const;
 
-// Spec §12 mobile dock: Home · Budget · Payments · AI · More
+export const GROUPS = ["Money", "Insight"] as const;
+
+// Phone tabs: Home · Activity · Add · Budgets · Search
 export const DOCK = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard },
-  { href: "/budgets", label: "Budget", icon: Gauge },
-  { href: "/transactions", label: "Payments", icon: ArrowLeftRight },
-  { href: "/ai", label: "AI", icon: Bot },
-  { href: "/more", label: "More", icon: MoreHorizontal },
+  { href: "/transactions", label: "Activity", icon: ArrowLeftRight },
+  { href: "/budgets", label: "Budgets", icon: Gauge },
 ] as const;
 
 export const MORE = [
   { href: "/accounts", label: "Accounts", icon: Wallet, hint: "Banks, MoMo, cash, IKE/IKZE" },
   { href: "/subscriptions", label: "Subscriptions", icon: Repeat, hint: "Renewals, duplicates, client plans" },
   { href: "/reports", label: "Reports", icon: ChartNoAxesCombined, hint: "Cash flow, categories, 50/30/20" },
+  { href: "/ai", label: "AI spend", icon: Bot, hint: "Usage and reservations" },
   { href: "/settings", label: "Settings", icon: Settings, hint: "Rates, workspace, security" },
   { href: "/settings#rates", label: "Exchange rates", icon: Landmark, hint: "NBP · ECB · BNR" },
 ] as const;
+
+export { Plus, Search };

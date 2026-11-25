@@ -1,12 +1,18 @@
+import { ChromePortal } from "@/components/layout/PageChrome";
+
 export function PageHeader({ eyebrow, title, subtitle, actions }: { eyebrow?: string; title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        {eyebrow && <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">{eyebrow}</p>}
-        <h1 className="display mt-1 text-[30px] leading-tight sm:text-[36px]">{title}</h1>
-        {subtitle && <p className="mt-1.5 max-w-2xl text-sm text-muted">{subtitle}</p>}
+    <ChromePortal>
+      <div className="min-w-0">
+        <h1 className="m-0 text-[22px] font-bold tracking-tight">{title}</h1>
+        {(eyebrow || subtitle) && (
+          <div className="mt-0.5 truncate text-[12.5px]" style={{ color: "var(--text2)" }}>
+            {eyebrow}{eyebrow && subtitle ? " · " : ""}{subtitle}
+          </div>
+        )}
       </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
-    </div>
+      <div className="hidden flex-1 lg:block" />
+      {actions && <div className="ml-auto hidden flex-wrap items-center gap-2 sm:flex">{actions}</div>}
+    </ChromePortal>
   );
 }

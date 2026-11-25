@@ -219,7 +219,7 @@ def test_nbp_sync_parses_official_shape(db, monkeypatch):
         if "nbp" in u:
             code = u.rstrip("/").split("?")[0].rstrip("/").split("/")[-1]
             table = "B" if code == "RWF" else "A"
-            mid = {"EUR": 4.4633, "USD": 4.017, "RWF": 0.002717}[code]
+            mid = {"EUR": 4.4633, "USD": 4.017, "GBP": 5.1234, "RWF": 0.002717}[code]
             return httpx.Response(200, json={"table": table, "code": code, "rates": [
                 {"no": f"x/{table}/NBP/2026", "effectiveDate": "2026-11-24", "mid": mid}]})
         if "bnrrw" in u:
@@ -229,7 +229,7 @@ def test_nbp_sync_parses_official_shape(db, monkeypatch):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     res = fx.sync_all(db, client)
     db.commit()
-    assert not res["errors"] and len(res["stored"]) == 5
+    assert not res["errors"] and len(res["stored"]) == 6
     from datetime import date
     q = fx.get_rate(db, "RWF", "PLN", date(2026, 11, 24))
     assert str(q.rate) == "0.002717" and "NBP table B" in q.source

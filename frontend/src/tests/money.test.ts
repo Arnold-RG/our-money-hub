@@ -11,6 +11,7 @@ describe("formatAmount", () => {
   it("formats EUR/USD with leading symbol and real minus sign", () => {
     expect(formatAmount("-12.30", "EUR")).toBe("−€12.30");
     expect(formatAmount("0.10", "USD", { sign: true })).toBe("+$0.10");
+    expect(formatAmount("12.30", "GBP")).toBe("£12.30");
   });
   it("never converts through floats", () => {
     // 0.1 + 0.2 style traps can't happen: we only reformat the exact string

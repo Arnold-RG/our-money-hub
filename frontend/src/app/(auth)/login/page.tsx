@@ -124,7 +124,7 @@ export default function LoginPage() {
           </div>
           <h2 className="display text-3xl">{mfa ? "Two-step sign-in" : mode === "signin" ? "Welcome back" : "Create your hub"}</h2>
           <p className="mt-2 text-sm text-muted">
-            {mfa ? "Enter the 6-digit code from your authenticator app." : mode === "signin" ? (regOpen ? "Sign in, or create the owner account for this hub." : "Sign in to your books.") : (ownerSetup ? "One-time owner setup. " : "") + "Personal and Business workspaces are created, empty and ready."}
+            {mfa ? "Enter the 6-digit code from your authenticator app." : mode === "signin" ? (regOpen ? "Sign in, or create the owner account for this hub. RAGI uses a separate login." : "Sign in to your books. This account is only for Our Money Hub.") : (ownerSetup ? "One-time owner setup. " : "") + "Personal and Business workspaces are created, empty and ready. RAGI uses a separate login."}
           </p>
           {!mfa && regOpen && (
             <div className="mt-6">
