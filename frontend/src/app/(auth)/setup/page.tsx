@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useSecretFromFragment } from "@/lib/useSecretFromFragment";
+import { normalizeUsername, USERNAME_FIELD, USERNAME_HINT } from "@/lib/username";
 import { useApp } from "@/providers/app-provider";
 import { Button, ErrorNote, Field, Input } from "@/components/ui";
 
@@ -38,7 +39,7 @@ function SetupForm() {
     try {
       const r = await api<{ mfa_enrolment_required?: boolean }>("/auth/register", {
         method: "POST",
-        json: { setup_token: token, username, email, password, display_name: name },
+        json: { setup_token: token, username: normalizeUsername(username), email, password, display_name: name },
       });
       if (r.mfa_enrolment_required) router.push("/verify?enrol=1");
       else { await refreshMe(); router.replace("/dashboard"); }
@@ -73,10 +74,19 @@ function SetupForm() {
         </Field>
         ) : null}
         <Field label="Your name">{(id) => <Input id={id} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required />}</Field>
-        <Field label="Username" hint="3–32 characters: start with a letter, then letters, numbers or underscores.">
-          {(id) => <Input id={id} autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={32} pattern="[a-z][a-z0-9_]{2,31}" />}
+        <Field label="Username" hint={USERNAME_HINT}>
+          {(id) => (
+            <Input
+              id={id}
+              {...USERNAME_FIELD}
+              value={username}
+              onChange={(e) => setUsername(normalizeUsername(e.target.value))}
+              onInvalid={(e) => { e.preventDefault(); setError(USERNAME_HINT); }}
+              required
+            />
+          )}
         </Field>
-        <Field label="Email">{(id) => <Input id={id} type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />}</Field>
+        <Field label="Email">{(id) => <Input id={id} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}</Field>
         <Field label="Password" hint="12–128 characters. No composition rules.">
           {(id) => (
             <div className="relative">

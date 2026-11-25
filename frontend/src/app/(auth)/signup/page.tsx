@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Divider, ProviderButtons } from "@/components/auth/AuthShell";
 import { api, ApiError } from "@/lib/api";
+import { normalizeUsername, USERNAME_FIELD, USERNAME_HINT } from "@/lib/username";
 
 interface AuthConfig {
   registration_mode: string;
@@ -37,7 +38,7 @@ export default function SignupPage() {
     setBusy(true); setError(null);
     try {
       const r = await api<{ mfa_enrolment_required: boolean; recovery_codes: string[] | null }>("/auth/register", {
-        json: { username, email, password, display_name: fullName },
+        json: { username: normalizeUsername(username), email, password, display_name: fullName },
       });
       if (r.recovery_codes?.length) setCodes(r.recovery_codes);
       else if (r.mfa_enrolment_required) router.push("/verify?enrol=1");
@@ -88,7 +89,18 @@ export default function SignupPage() {
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="label" htmlFor="username">Username</label>
-            <input id="username" className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={32} disabled={closed} />
+            <input
+              id="username"
+              className="input"
+              type="text"
+              {...USERNAME_FIELD}
+              value={username}
+              onChange={(e) => setUsername(normalizeUsername(e.target.value))}
+              onInvalid={(e) => { e.preventDefault(); setError(USERNAME_HINT); }}
+              required
+              disabled={closed}
+            />
+            <p className="mt-1 text-xs" style={{ color: "var(--faint)" }}>{USERNAME_HINT}</p>
           </div>
           <div>
             <label className="label" htmlFor="full_name">Full name</label>
