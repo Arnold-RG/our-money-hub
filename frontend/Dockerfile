@@ -6,14 +6,17 @@ RUN npm ci
 
 FROM node:22-slim AS build
 WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
+# Render injects service env as build-args; declare ARG or the rewrite bakes in localhost.
+ARG OMH_API_INTERNAL_URL=http://127.0.0.1:8420
+ENV OMH_API_INTERNAL_URL=$OMH_API_INTERNAL_URL NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
 FROM node:22-slim AS run
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+ARG OMH_API_INTERNAL_URL=http://127.0.0.1:8420
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 OMH_API_INTERNAL_URL=$OMH_API_INTERNAL_URL
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
