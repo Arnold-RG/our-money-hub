@@ -5,6 +5,7 @@ import { Suspense, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useApp } from "@/providers/app-provider";
 import { Button, ErrorNote, Field, Input } from "@/components/ui";
+import { AuthenticatorQr } from "@/components/auth/AuthenticatorQr";
 
 function VerifyForm() {
   const router = useRouter();
@@ -76,9 +77,13 @@ function VerifyForm() {
       </p>
       {enrol && !setup && <Button className="mt-8 h-12 w-full" onClick={startSetup}>Generate my secret</Button>}
       {enrol && setup && (
-        <div className="mt-6 space-y-2 rounded-2xl border p-4" style={{ borderColor: "var(--border)", background: "var(--s2)" }}>
-          <div className="text-xs uppercase tracking-wide" style={{ color: "var(--faint)" }}>Add this key to your authenticator</div>
-          <code className="block break-all text-sm">{setup.secret}</code>
+        <div className="mt-6 space-y-4 rounded-2xl border p-4" style={{ borderColor: "var(--border)", background: "var(--s2)" }}>
+          <div className="text-xs uppercase tracking-wide" style={{ color: "var(--faint)" }}>Scan this QR with your authenticator app</div>
+          <AuthenticatorQr otpauthUri={setup.otpauth_uri} />
+          <div>
+            <div className="text-xs" style={{ color: "var(--faint)" }}>Can’t scan? Enter this key</div>
+            <code className="mt-1 block break-all text-sm">{setup.secret}</code>
+          </div>
           <a className="text-xs underline" href={setup.otpauth_uri}>Open in authenticator app</a>
         </div>
       )}

@@ -10,7 +10,7 @@ import { Button, ErrorNote, Field, Input } from "@/components/ui";
 function SetupForm() {
   const router = useRouter();
   const { refreshMe } = useApp();
-  const { secret } = useSecretFromFragment();
+  const { secret, ready } = useSecretFromFragment();
   const [token, setToken] = useState("");
   useEffect(() => { if (secret) setToken(secret); }, [secret]);
   const [username, setUsername] = useState("");
@@ -65,9 +65,13 @@ function SetupForm() {
         This is a one-time setup for this Our Money Hub instance. You’ll enrol two-step verification on the next screen. We never collect a password for you — you choose it here.
       </p>
       <form onSubmit={submit} className="mt-8 flex flex-col gap-4">
+        {ready && token.length >= 32 ? (
+          <input type="hidden" name="setup_token" value={token} autoComplete="off" />
+        ) : ready ? (
         <Field label="Setup token" hint="The one-time token from the server environment. It is at least 32 characters.">
           {(id) => <Input id={id} autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} required minLength={32} />}
         </Field>
+        ) : null}
         <Field label="Your name">{(id) => <Input id={id} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required />}</Field>
         <Field label="Username" hint="3–32 characters: start with a letter, then letters, numbers or underscores.">
           {(id) => <Input id={id} autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={32} pattern="[a-z][a-z0-9_]{2,31}" />}
