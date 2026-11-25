@@ -14,4 +14,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8420
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import os,urllib.request,sys;p=os.environ.get('PORT','8420');sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/api/health').status==200 else 1)"
 # Render sets PORT and terminates TLS. Trust the platform proxy hop only.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8420} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "DATABASE_URL=\"${MIGRATE_DATABASE_URL:-$DATABASE_URL}\" alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8420} --proxy-headers --forwarded-allow-ips='*'"]

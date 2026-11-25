@@ -14,8 +14,14 @@ class Base(DeclarativeBase):
 
 def make_engine(url: str):
     kwargs: dict = {"pool_pre_ping": True}
+    connect_args = {}
     if url.startswith("sqlite"):
-        kwargs["connect_args"] = {"check_same_thread": False}
+        connect_args["check_same_thread"] = False
+    elif "pooler" in url:
+        # Neon pooler is PgBouncer in transaction mode; disable prepared statements.
+        connect_args["prepare_threshold"] = None
+    if connect_args:
+        kwargs["connect_args"] = connect_args
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
 

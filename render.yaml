@@ -1,7 +1,7 @@
 # Our Money Hub on Render — created by Arnold Rurangwa / Arnova Group.
-# Web services are Free. The Postgres instance is a workspace-shared Free
-# database (one per workspace) with a dedicated logical database and role
-# for this app. DATABASE_URL is set in the Dashboard / MCP, not in this file.
+# Two Free web services in Frankfurt. The database is a separate Neon
+# Postgres project (not Render Postgres). Set DATABASE_URL in the
+# Dashboard / MCP from the Neon connection string; do not commit it.
 # Region: Frankfurt. Do not commit secrets.
 
 services:
@@ -27,18 +27,22 @@ services:
         value: "true"
       - key: RATES_AUTO_SYNC
         value: "true"
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
       - key: DATABASE_URL
+        sync: false
+      - key: MIGRATE_DATABASE_URL
         sync: false
       - key: OMH_SECRET_KEY
         generateValue: true
       - key: OMH_FIELD_KEY
         generateValue: true
       - key: OMH_OWNER_SETUP_TOKEN
-        generateValue: true
+        sync: false
       - key: PUBLIC_BASE_URL
-        sync: false
+        value: https://arnova-omh.onrender.com
       - key: CORS_ORIGINS
-        sync: false
+        value: https://arnova-omh.onrender.com
 
   - type: web
     name: arnova-omh
@@ -53,4 +57,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: OMH_API_INTERNAL_URL
-        sync: false
+        value: https://arnova-omh-api.onrender.com
