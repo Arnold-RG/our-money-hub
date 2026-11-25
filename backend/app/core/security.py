@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 
-COOKIE_NAME = "omh_session"
-_ph = PasswordHasher()  # Argon2id, library defaults (RFC 9106 low-memory profile)
+COOKIE_NAME = "__Host-omh_session"
+LEGACY_COOKIE_NAME = "omh_session"
+_ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16)
 _DUMMY = _ph.hash("timing-equaliser-not-a-password")
 
 
@@ -31,35 +32,70 @@ def verify_password(password: str, stored: str | None) -> bool:
         return False
 
 
+def needs_rehash(password_hash: str) -> bool:
+    try:
+        return _ph.check_needs_rehash(password_hash)
+    except Exception:
+        return False
+
+
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def new_session(db: Session, user_id: str, *, mfa_pending: bool = False) -> str:
+def new_session(db: Session, user_id: str, *, mfa_pending: bool = False, enrolment_required: bool = False) -> str:
     from app.database.models import UserSession
 
     token = secrets.token_urlsafe(32)
-    minutes = 10 if mfa_pending else get_settings().access_token_minutes
+    now = datetime.now(UTC)
+    minutes = get_settings().mfa_pending_minutes if (mfa_pending or enrolment_required) else get_settings().access_token_minutes
     db.add(UserSession(token_hash=token_hash(token), user_id=user_id, mfa_pending=mfa_pending,
-                       expires_at=datetime.now(UTC) + timedelta(minutes=minutes)))
+                       enrolment_required=enrolment_required, expires_at=now + timedelta(minutes=minutes),
+                       last_seen_at=now, reauth_at=None if mfa_pending else now))
     db.flush()
     return token
 
 
-def load_session(db: Session, token: str | None, *, allow_mfa_pending: bool = False):
-    from app.database.models import UserSession
+def load_session(db: Session, token: str | None, *, allow_mfa_pending: bool = False, allow_enrolment: bool = False):
+    from app.database.models import User, UserSession
 
     if not token:
         return None
     s = db.get(UserSession, token_hash(token))
     if not s or s.revoked_at:
         return None
+    now = datetime.now(UTC)
     exp = s.expires_at if s.expires_at.tzinfo else s.expires_at.replace(tzinfo=UTC)
-    if exp < datetime.now(UTC):
+    if exp < now:
         return None
     if s.mfa_pending and not allow_mfa_pending:
         return None
+    user = db.get(User, s.user_id)
+    if not user:
+        return None
+    last = s.last_seen_at or s.created_at
+    if last and last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    settings = get_settings()
+    # Owners have the shorter idle timeout.
+    from sqlalchemy import select
+    from app.database.models import WorkspaceMember
+    is_owner = db.scalar(select(WorkspaceMember).where(
+        WorkspaceMember.user_id == user.id, WorkspaceMember.role == "owner")) is not None
+    idle = settings.idle_timeout_minutes_privileged if is_owner else settings.idle_timeout_minutes
+    if last and now - last > timedelta(minutes=idle):
+        return None
+    if not s.last_seen_at or (now - (s.last_seen_at if s.last_seen_at.tzinfo else s.last_seen_at.replace(tzinfo=UTC))) >= timedelta(seconds=60):
+        s.last_seen_at = now
+        db.flush()
+    if getattr(s, "enrolment_required", False) and not allow_enrolment and not allow_mfa_pending:
+        # Caller (current_user) still sees the session but must reject enrolment-only ones.
+        pass
     return s
+
+
+def read_token(request) -> str | None:
+    return request.cookies.get(COOKIE_NAME) or request.cookies.get(LEGACY_COOKIE_NAME)
 
 
 def revoke(db: Session, token: str | None) -> None:

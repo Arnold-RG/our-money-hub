@@ -5,6 +5,8 @@ _tmp = tempfile.mkdtemp(prefix="omh-test-")
 os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_tmp}/test.sqlite3"))
 os.environ.setdefault("OMH_SECRET_KEY", "test-only-secret-not-used-anywhere-else")
 os.environ["APP_ENV"] = "test"
+os.environ.setdefault("PUBLIC_BASE_URL", "https://testserver")
+os.environ.setdefault("COOKIE_SECURE", "true")
 os.environ.setdefault("ALLOW_REGISTRATION", "true")  # tests create many users; the closed default has its own test
 
 import pytest  # noqa: E402
@@ -19,9 +21,8 @@ from app.main import app  # noqa: E402
 def fresh_db():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    from app.api.v1 import auth, insight
+    from app.api.v1 import insight
 
-    auth.throttle.clear()
     insight._last_sync["at"] = 0.0
     yield
 
@@ -56,12 +57,36 @@ class Api:
         return self.c.delete("/api/v1" + url, headers=self._h())
 
 
-def register(email="owner@example.com", name="Owner") -> tuple[Api, dict]:
-    c = TestClient(app)
-    r = c.post("/api/v1/auth/register", json={"email": email, "password": "correct-horse-battery", "display_name": name},
-               headers={"X-OMH-Client": "web"})
+def _client() -> TestClient:
+    c = TestClient(app, base_url="https://testserver")
+    c.headers.update({"X-OMH-Client": "web", "Origin": "https://testserver"})
+    return c
+
+
+def _enrol_owner(c: TestClient) -> None:
+    """Owners must enrol TOTP before the session is fully privileged."""
+    import pyotp
+    r = c.post("/api/v1/auth/mfa/setup")
+    if r.status_code == 401:
+        return
     assert r.status_code == 200, r.text
-    me = r.json()
+    secret = r.json()["secret"]
+    r = c.post("/api/v1/auth/mfa/enable", json={"code": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200, r.text
+
+
+def register(email="owner@example.com", name="Owner", enrol: bool = True) -> tuple[Api, dict]:
+    c = _client()
+    r = c.post("/api/v1/auth/register", json={"email": email, "password": "correct-horse-battery", "display_name": name})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    if enrol and body.get("mfa_enrolment_required"):
+        _enrol_owner(c)
+    me_r = c.get("/api/v1/auth/me")
+    if me_r.status_code != 200:
+        # enrolment-only session: return the raw register payload
+        return Api(c, None), body
+    me = me_r.json()
     personal = next(w for w in me["workspaces"] if w["kind"] == "personal")
     return Api(c, personal["id"]), me
 

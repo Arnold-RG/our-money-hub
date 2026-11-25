@@ -96,3 +96,17 @@ def test_monthly_equivalent(amount, interval, expected):
 def test_money_requires_int():
     with pytest.raises(MoneyError):
         Money(1.5, "PLN")  # type: ignore[arg-type]
+
+
+def test_exact_convert_uses_published_rate_and_report_rounds_half_up_once():
+    from decimal import Decimal
+    from app.core.money import Money, exact_convert, round_report
+
+    # Two 1.00 EUR at a published mid of 4.005 PLN/EUR.
+    # Exact sum is 8.010 PLN → half-up once = 8.01. Per-line half-up would be 4.01+4.01=8.02.
+    rate = Decimal("4.005")  # used as published, not pre-rounded to 4.00 or 4.01
+    a = exact_convert(Money(100, "EUR"), "PLN", rate)
+    b = exact_convert(Money(100, "EUR"), "PLN", rate)
+    assert a == Decimal("4.005")
+    assert round_report(a + b, "PLN") == 801
+    assert round_report(a, "PLN") + round_report(b, "PLN") == 802

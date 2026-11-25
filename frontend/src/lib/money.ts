@@ -5,6 +5,8 @@
  */
 export type Currency = "PLN" | "RWF" | "EUR" | "USD" | "GBP";
 export const CURRENCIES: Currency[] = ["PLN", "RWF", "EUR", "USD", "GBP"];
+/** Menu order: RWF first; PLN stays the default reporting currency. */
+export const SWITCHER_CURRENCIES: Currency[] = ["RWF", "PLN", "EUR", "USD", "GBP"];
 export const MINOR_UNITS: Record<Currency, number> = { PLN: 2, RWF: 0, EUR: 2, USD: 2, GBP: 2 };
 export const CURRENCY_LABEL: Record<Currency, string> = {
   PLN: "Polish złoty",

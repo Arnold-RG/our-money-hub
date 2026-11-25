@@ -10,7 +10,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.money import CURRENCIES, Money, convert, normalize_currency
+from app.core.holidays import is_stale_rate
+from app.core.money import CURRENCIES, Money, convert, exact_convert, normalize_currency, round_report
 from app.database.models import ExchangeRate
 
 PIVOT = "PLN"  # NBP publishes every currency against PLN
@@ -39,20 +40,21 @@ def _scope(ws: str | None):
 
 
 def _direct(db: Session, base: str, quote: str, on: date, ws: str | None) -> tuple[ExchangeRate | None, bool]:
-    """Freshest usable rate on/before ``on`` (official + this workspace's manual rates). Returns (rate, stale_seen)."""
-    rows = db.scalars(
+    """Last official (or manual) mid on/before ``on``. Weekend/holiday gaps carry the last table forward.
+
+    The rate is returned even when stale; ``stale`` is True when its effective_date is more than
+    2 Polish business days earlier than ``on``.
+    """
+    r = db.scalars(
         select(ExchangeRate)
         .where(ExchangeRate.base == base, ExchangeRate.quote == quote, ExchangeRate.effective_date <= on,
                ExchangeRate.rate_type == "mid", _scope(ws))
         .order_by(ExchangeRate.effective_date.desc(), ExchangeRate.priority, ExchangeRate.fetched_at.desc())
-        .limit(8)
-    ).all()
-    stale = False
-    for r in rows:
-        if (on - r.effective_date).days <= max_age(r):
-            return r, stale
-        stale = True
-    return None, stale
+        .limit(1)
+    ).first()
+    if not r:
+        return None, False
+    return r, is_stale_rate(r.effective_date, on)
 
 
 def _pair(db: Session, base: str, quote: str, on: date, ws: str | None) -> tuple[RateQuote | None, bool]:
@@ -61,14 +63,16 @@ def _pair(db: Session, base: str, quote: str, on: date, ws: str | None) -> tuple
     cands = []
     r, s1 = _direct(db, base, quote, on, ws)
     if r:
-        cands.append((r.effective_date, -r.priority, 1, RateQuote(Decimal(r.rate), r.effective_date, r.source)))
+        cands.append((r.effective_date, -r.priority, 1, s1,
+                      RateQuote(Decimal(r.rate), r.effective_date, r.source)))
     inv, s2 = _direct(db, quote, base, on, ws)
     if inv:
-        cands.append((inv.effective_date, -inv.priority, 0,
+        cands.append((inv.effective_date, -inv.priority, 0, s2,
                       RateQuote(Decimal(1) / Decimal(inv.rate), inv.effective_date, f"inverse of {inv.source}")))
     if not cands:
         return None, s1 or s2
-    return max(cands, key=lambda c: c[:3])[3], False
+    best = max(cands, key=lambda c: c[:3])
+    return best[4], best[3]
 
 
 def get_rate_ex(db: Session, base: str, quote: str, on: date, ws: str | None = None) -> tuple[RateQuote | None, bool]:
@@ -77,12 +81,12 @@ def get_rate_ex(db: Session, base: str, quote: str, on: date, ws: str | None = N
         return RateQuote(Decimal(1), None, "identity"), False
     q, stale = _pair(db, base, quote, on, ws)
     if q:
-        return q, False
+        return q, stale
     if PIVOT not in (base, quote):
         (a, sa), (b, sb) = _pair(db, base, PIVOT, on, ws), _pair(db, PIVOT, quote, on, ws)
         if a and b:
             eff = min(d for d in (a.effective_date, b.effective_date) if d)
-            return RateQuote(a.rate * b.rate, eff, f"cross via {PIVOT} ({a.source}; {b.source})"), False
+            return RateQuote(a.rate * b.rate, eff, f"cross via {PIVOT} ({a.source}; {b.source})"), bool(sa or sb)
         stale = stale or sa or sb
     return None, stale
 
@@ -108,21 +112,37 @@ class Converter:
         self.missing: set[str] = set()
         self.used: dict[str, RateQuote] = {}
 
-    def __call__(self, money: Money, on: date) -> Money | None:
-        if money.currency == self.to:
-            return money
-        key = (money.currency, on)
+    def _quote(self, currency: str, on: date) -> RateQuote | None:
+        key = (currency, on)
         if key not in self._cache:
-            q, stale = get_rate_ex(self.db, money.currency, self.to, on, self.ws)
+            q, stale = get_rate_ex(self.db, currency, self.to, on, self.ws)
             self._cache[key] = q
             if stale:
-                self.stale.add(money.currency)
+                self.stale.add(currency)
         q = self._cache[key]
         if not q:
-            self.missing.add(money.currency)
+            self.missing.add(currency)
             return None
-        self.used[money.currency] = q
-        return convert(money, self.to, q.rate)
+        self.used[currency] = q
+        return q
+
+    def exact(self, money: Money, on: date) -> Decimal | None:
+        """Reporting-currency major units, using the published rate with no rounding."""
+        if money.currency == self.to:
+            return money.amount
+        q = self._quote(money.currency, on)
+        if not q:
+            return None
+        return exact_convert(money, self.to, q.rate)
+
+    def __call__(self, money: Money, on: date) -> Money | None:
+        """A single displayed amount: exact conversion, then half-up once."""
+        if money.currency == self.to:
+            return money
+        amt = self.exact(money, on)
+        if amt is None:
+            return None
+        return Money(round_report(amt, self.to), self.to)
 
 
 PRIORITY = {"manual": 0, "nbp": 1, "ecb": 2, "bnr": 3}
@@ -170,6 +190,7 @@ def sync_nbp(db: Session, client: httpx.Client) -> list[ExchangeRate]:
         resp = client.get(f"{s.nbp_api_base}/exchangerates/rates/{table}/{code}/", params={"format": "json"})
         resp.raise_for_status()
         item = resp.json()["rates"][0]
+        # mid is stored as published (Decimal of the official string); never pre-rounded.
         out.append(_store(db, base=code, quote=PIVOT, rate=Decimal(str(item["mid"])),
                           eff=date.fromisoformat(item["effectiveDate"]), source=f"NBP table {table} {item['no']}",
                           provider="nbp", url="https://nbp.pl"))

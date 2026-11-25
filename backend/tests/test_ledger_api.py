@@ -123,7 +123,12 @@ def test_personal_and_business_books_are_separate(api):
 
 
 def test_csrf_header_required_for_cookie_writes(api):
-    r = api.c.post("/api/v1/accounts", json={"name": "x", "currency": "PLN"}, headers={"X-Workspace-Id": api.ws})
+    from fastapi.testclient import TestClient
+    from app.main import app
+    raw = TestClient(app, base_url="https://testserver")
+    raw.cookies.update(api.c.cookies)
+    r = raw.post("/api/v1/accounts", json={"name": "x", "currency": "PLN"},
+                 headers={"X-Workspace-Id": api.ws, "Origin": "https://testserver"})
     assert r.status_code == 403
 
 
@@ -131,7 +136,7 @@ def test_unauthenticated(api):
     from fastapi.testclient import TestClient
     from app.main import app
 
-    assert TestClient(app).get("/api/v1/accounts", headers={"X-Workspace-Id": api.ws}).status_code == 401
+    assert TestClient(app, base_url="https://testserver").get("/api/v1/accounts", headers={"X-Workspace-Id": api.ws}).status_code == 401
 
 
 def test_login_and_wrong_password():
@@ -139,8 +144,8 @@ def test_login_and_wrong_password():
     from fastapi.testclient import TestClient
     from app.main import app
 
-    c = TestClient(app)
-    h = {"X-OMH-Client": "web"}
+    c = TestClient(app, base_url="https://testserver")
+    h = {"X-OMH-Client": "web", "Origin": "https://testserver"}
     assert c.post("/api/v1/auth/login", json={"email": "c@example.com", "password": "nope-nope-nope"}, headers=h).status_code == 401
     assert c.post("/api/v1/auth/login", json={"email": "c@example.com", "password": "correct-horse-battery"},
                   headers=h).status_code == 200
@@ -153,8 +158,8 @@ def test_demo_login_is_empty(monkeypatch):
 
     monkeypatch.setattr(get_settings(), "demo_login_enabled", True)
     monkeypatch.setattr(get_settings(), "app_env", "development")
-    c = TestClient(app)
-    me = c.post("/api/v1/auth/demo", headers={"X-OMH-Client": "web"}).json()
+    c = TestClient(app, base_url="https://testserver")
+    me = c.post("/api/v1/auth/demo", headers={"X-OMH-Client": "web", "Origin": "https://testserver"}).json()
     ws = me["workspaces"][0]["id"]
     assert c.get("/api/v1/accounts", headers={"X-Workspace-Id": ws}).json() == []
     s = c.get("/api/v1/reports/summary", headers={"X-Workspace-Id": ws}).json()

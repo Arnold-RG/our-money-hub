@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Build output, local env, and test HMAC fixtures are not production secrets"
+paths = [
+  '''(^|/)\.next/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)test-results/''',
+  '''(^|/)playwright-output/''',
+  '''(^|/)\.env$''',
+  '''(^|/)\.env\..*''',
+  '''(^|/)backend/tests/test_contract.py$''',
+]

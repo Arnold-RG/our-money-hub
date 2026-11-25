@@ -6,16 +6,22 @@ Rules (see docs/FINANCIAL_ENGINE.md):
 * Arithmetic is only allowed between amounts of the same currency.
   Mixing currencies raises ``CurrencyMismatch``; conversion must be explicit and
   use a timestamped exchange rate.
-* Rounding uses ROUND_HALF_EVEN (banker's rounding) so long series of
-  conversions do not drift in one direction.
+* Official rates (NBP mid, and ECB/BNR fallbacks) are stored and used as
+  published. They are never rounded or truncated before a conversion.
+* Reports and displayed totals sum exact converted amounts first, then round
+  half-up once to the reporting currency's minor unit. Line items are not
+  rounded before they are added together.
 * Splitting an amount (allocations, normalising yearly plans to months) uses the
   largest-remainder method so the parts always add back to the exact total.
+* parse_amount stays strict: it rejects extra decimal places rather than
+  silently rounding. convert() (a single stored amount) still uses
+  ROUND_HALF_EVEN so existing posted conversions stay stable.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
 
 # ISO 4217 minor-unit exponents for supported currencies.
 CURRENCIES: dict[str, int] = {"PLN": 2, "EUR": 2, "USD": 2, "GBP": 2, "RWF": 0}
@@ -234,6 +240,27 @@ def convert(money: Money, to_currency: str, rate: Decimal | str) -> Money:
     exp = exponent(to_currency)
     quant = Decimal(1).scaleb(-exp)
     return Money(int(major.quantize(quant, rounding=ROUNDING).scaleb(exp)), to_currency)
+
+
+def exact_convert(money: Money, to_currency: str, rate: Decimal | str) -> Decimal:
+    """Major units of ``to_currency`` using ``rate`` as published. Never rounds."""
+    to_currency = normalize_currency(to_currency)
+    rate = Decimal(str(rate))
+    if rate <= 0:
+        raise MoneyError("Exchange rate must be positive")
+    if to_currency == money.currency:
+        if rate != 1:
+            raise MoneyError("Same-currency conversion must use rate 1")
+        return money.amount
+    return money.amount * rate
+
+
+def round_report(amount: Decimal, currency: str) -> int:
+    """Half-up once to the currency's minor unit. Use only at display/report totals."""
+    currency = normalize_currency(currency)
+    exp = exponent(currency)
+    quant = Decimal(1).scaleb(-exp)
+    return int(amount.quantize(quant, rounding=ROUND_HALF_UP).scaleb(exp))
 
 
 INTERVAL_MONTHS: dict[str, Decimal] = {

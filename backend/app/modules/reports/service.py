@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.dates import add_months, month_end, month_start
-from app.core.money import Money, format_plain
+from app.core.money import Money, format_plain, round_report
 from app.database.models import (AIUsageRecord, Budget, FinancialAccount, SavingsGoal, Subscription, Transaction,
                                  TransactionCategory)
 from app.modules.budgets import service as budgets
@@ -43,19 +43,20 @@ def _accounts(db: Session, ws: str) -> list[FinancialAccount]:
 
 
 def balances(db: Session, ws: str, conv: Converter, on: date) -> tuple[int, int, list[dict]]:
-    total, pending_total, rows = 0, 0, []
+    total_e, pending_e, rows = Decimal(0), Decimal(0), []
     for a in _accounts(db, ws):
         b = account_balances(db, a)
-        c = conv(Money(b["confirmed"], a.currency), on)
-        p = conv(Money(b["pending"], a.currency), on)
-        if c is not None:
-            total += c.minor
-        if p is not None:
-            pending_total += p.minor
+        c_e = conv.exact(Money(b["confirmed"], a.currency), on)
+        p_e = conv.exact(Money(b["pending"], a.currency), on)
+        if c_e is not None:
+            total_e += c_e
+        if p_e is not None:
+            pending_e += p_e
+        c_minor = round_report(c_e, conv.to) if c_e is not None else None
         rows.append({"account_id": a.id, "name": a.name, "kind": a.kind, "currency": a.currency,
                      "balance": m(b["confirmed"], a.currency), "pending": m(b["pending"], a.currency),
-                     "converted": m(c.minor, conv.to) if c else None})
-    return total, pending_total, rows
+                     "converted": m(c_minor, conv.to) if c_minor is not None else None})
+    return round_report(total_e, conv.to), round_report(pending_e, conv.to), rows
 
 
 def subscription_totals(db: Session, ws: str, conv: Converter, on: date) -> dict:
@@ -71,28 +72,28 @@ def subscription_totals(db: Session, ws: str, conv: Converter, on: date) -> dict
         yearly = Money(s.amount_minor, s.currency).multiply(subs.PER_YEAR[s.interval])  # exact: integer multiples
         if s.interval == "weekly":
             yearly = Money(s.amount_minor * 52, s.currency)
-        conv_y = conv(yearly, on)
-        if conv_y is None:
+        yearly_e = conv.exact(yearly, on)
+        if yearly_e is None:
             continue
         keys = ["mrr"] if s.direction == "incoming" else ["outgoing"] + (["ai"] if s.kind in subs.AI_KINDS else []) + (
             ["infra"] if s.kind in subs.INFRA_KINDS else [])
         for k in keys:
-            annual[k] += Decimal(conv_y.minor)
+            annual[k] += yearly_e
     out = defaultdict(int)
     for k, v in annual.items():
-        out[k] = int((v / 12).quantize(Decimal(1), rounding="ROUND_HALF_EVEN"))
-        out[k + "_annual"] = int(v)
+        out[k] = round_report(v / 12, conv.to)
+        out[k + "_annual"] = round_report(v, conv.to)
     return out
 
 
 def ai_usage_total(db: Session, ws: str, start: date, end: date, conv: Converter) -> int:
-    total = 0
+    total = Decimal(0)
     for u in db.scalars(select(AIUsageRecord).where(AIUsageRecord.workspace_id == ws,
                                                     AIUsageRecord.occurred_on >= start, AIUsageRecord.occurred_on <= end)):
-        c = conv(Money(u.cost_minor, u.currency), u.occurred_on)
+        c = conv.exact(Money(u.cost_minor, u.currency), u.occurred_on)
         if c is not None:
-            total += c.minor
-    return total
+            total += c
+    return round_report(total, conv.to)
 
 
 def summary(db: Session, ws: str, currency: str, month: date, today: date) -> dict:
@@ -148,11 +149,19 @@ def summary(db: Session, ws: str, currency: str, month: date, today: date) -> di
 
 def budget_view(bs: budgets.BudgetStatus) -> dict:
     b = bs.budget
+    over = bs.actual_minor > b.allocated_minor
     return {"id": b.id, "name": b.name, "scope": b.scope, "category_id": b.category_id, "ai_provider": b.ai_provider,
-            "currency": b.currency, "allocated": m(b.allocated_minor, b.currency), "actual": m(bs.actual_minor, b.currency),
-            "reserved": m(bs.reserved_minor, b.currency), "available": m(bs.available_minor, b.currency),
-            "utilization": str(bs.utilization), "committed_utilization": str(bs.committed_utilization),
-            "state": bs.state, "alert_threshold_pct": b.alert_threshold_pct, "hard_limit": b.hard_limit,
+            "currency": b.currency,
+            "allocated": m(b.allocated_minor, b.currency),
+            "actual_spend": m(bs.actual_minor, b.currency),
+            "actual": m(bs.actual_minor, b.currency),  # backward compatible alias
+            "reserved": m(bs.reserved_minor, b.currency),
+            "available": m(bs.available_minor, b.currency),
+            "utilization": str(bs.utilization),
+            "committed_utilization": str(bs.committed_utilization),
+            "state": bs.state,
+            "over_budget": over,
+            "alert_threshold_pct": b.alert_threshold_pct, "hard_limit": b.hard_limit,
             "period": bs.period_start.strftime("%Y-%m"), "unconverted": bs.unconverted}
 
 
@@ -299,6 +308,11 @@ def signals(db: Session, ws: str, currency: str, today: date) -> list[dict]:
                         "ids": [b.id]})
     conv = Converter(db, currency, ws)
     balances(db, ws, conv, today)
+    if conv.stale and not conv.missing:
+        out.append({"type": "stale_rate", "severity": "warning",
+                    "title": "Exchange rate out of date",
+                    "detail": f"The rate for {', '.join(sorted(conv.stale))} → {currency} is older than 2 Polish business days. Amounts still convert, and the date is shown.",
+                    "ids": []})
     if conv.missing:
         stale = sorted(conv.stale & conv.missing)
         out.append({"type": "stale_rate" if stale else "missing_rate", "severity": "warning",
@@ -320,6 +334,9 @@ class _SameCurrency:
         self.to = to
         self.missing: set[str] = set()
         self.stale: set[str] = set()
+
+    def exact(self, money: Money, on: date | None = None):
+        return money.amount if money.currency == self.to else None
 
     def __call__(self, money: Money, on: date | None = None) -> Money | None:
         return money if money.currency == self.to else None

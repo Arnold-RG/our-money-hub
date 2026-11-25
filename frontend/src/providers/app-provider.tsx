@@ -67,9 +67,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [workspace]);
 
   const unauth = error instanceof ApiError && error.status === 401;
+  const enrolBlocked = error instanceof ApiError && error.status === 403;
+  const publicAuth = ["/login", "/forgot", "/signup", "/setup", "/verify", "/verify-email", "/invite"].some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
   useEffect(() => {
-    if (unauth && pathname !== "/login") router.replace("/login");
-  }, [unauth, pathname, router]);
+    if (unauth && !publicAuth) router.replace("/login");
+    if (enrolBlocked && !pathname.startsWith("/verify")) router.replace("/verify?enrol=1");
+  }, [unauth, enrolBlocked, publicAuth, pathname, router]);
 
   const setWorkspaceId = useCallback((id: string) => {
     localStorage.setItem("omh.ws", id);

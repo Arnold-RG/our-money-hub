@@ -1,169 +1,97 @@
 "use client";
 
-import { motion } from "motion/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowRight, Fingerprint, Globe2, Landmark, ShieldCheck, Sparkles } from "lucide-react";
-import { api } from "@/lib/api";
+import { Divider, ProviderButtons } from "@/components/auth/AuthShell";
+import { api, ApiError } from "@/lib/api";
 import { useApp } from "@/providers/app-provider";
-import { Button, ErrorNote, Field, Input, Segmented } from "@/components/ui";
-import { Wordmark } from "@/components/layout/logo";
+import { Button, ErrorNote, Field, Input } from "@/components/ui";
+
+interface AuthConfig {
+  demo_login: boolean;
+  registration_mode: string;
+  owner_setup: boolean;
+  providers: { google: boolean; apple: boolean };
+}
+
+const GENERIC = "Email or password is incorrect";
 
 export default function LoginPage() {
   const router = useRouter();
   const { refreshMe } = useApp();
-  const [mode, setMode] = useState<"signin" | "register">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [mfa, setMfa] = useState(false);
-  const [demo, setDemo] = useState(false);
-  const [regOpen, setRegOpen] = useState(false);
-  const [ownerSetup, setOwnerSetup] = useState(false);
-  const [setupToken, setSetupToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [cfg, setCfg] = useState<AuthConfig | null>(null);
 
   useEffect(() => {
-    api<{ demo_login: boolean; registration_open: boolean; owner_setup?: boolean }>("/auth/config")
-      .then((c) => {
-        setDemo(c.demo_login);
-        setRegOpen(c.registration_open);
-        setOwnerSetup(Boolean(c.owner_setup));
-      })
-      .catch(() => {});
+    api<AuthConfig>("/auth/config").then(setCfg).catch(() => setCfg({
+      demo_login: false, registration_mode: "closed", owner_setup: false, providers: { google: false, apple: false },
+    }));
   }, []);
-
-  const done = async () => {
-    await refreshMe();
-    router.replace("/dashboard");
-  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
     try {
-      if (mfa) {
-        await api("/auth/mfa/verify", { method: "POST", json: { code } });
-        return done();
-      }
-      if (mode === "register") {
-        await api("/auth/register", { method: "POST", json: { email, password, display_name: name, ...(ownerSetup ? { setup_token: setupToken } : {}) } });
-        return done();
-      }
-      const r = await api<{ mfa_required?: boolean }>("/auth/login", { method: "POST", json: { email, password } });
-      if (r.mfa_required) {
-        setMfa(true);
-        return;
-      }
-      return done();
+      const r = await api<{ mfa_required?: boolean; mfa_enrolment_required?: boolean }>("/auth/login", { method: "POST", json: { email, password } });
+      if (r.mfa_enrolment_required) { router.push("/verify?enrol=1"); return; }
+      if (r.mfa_required) { router.push("/verify"); return; }
+      await refreshMe();
+      router.replace("/dashboard");
     } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+      setError(err instanceof ApiError && err.status === 429 ? "Too many attempts. Try again later." : GENERIC);
+    } finally { setBusy(false); }
   };
 
   const tryDemo = async () => {
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
     try {
       await api("/auth/demo", { method: "POST" });
-      await done();
+      await refreshMe();
+      router.replace("/dashboard");
     } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+      setError(err instanceof ApiError ? err.message : "Demo sign-in is not available");
+    } finally { setBusy(false); }
   };
 
   return (
-    <div className="relative grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
-      {/* Story side */}
-      <section className="relative hidden overflow-hidden border-r border-line lg:block">
-        <div className="aurora" aria-hidden />
-        <div className="grid-bg absolute inset-0" aria-hidden />
-        <div className="relative flex h-full flex-col justify-between p-12">
-          <Wordmark />
-          <div>
-            <motion.h1 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="display max-w-xl text-[56px] leading-[1.02]">
-              Everything you earn, spend, budget and subscribe to.
-            </motion.h1>
-            <p className="mt-5 max-w-md text-[15px] leading-relaxed text-muted">
-              One ledger for złoty, francs, euros and dollars. Personal and Arnova Group books kept apart. Every AI agent spends only what its budget allows.
-            </p>
-            <ul className="mt-10 grid max-w-lg grid-cols-2 gap-3 text-sm">
-              {[
-                { i: Landmark, t: "Double-entry ledger", d: "Balanced to the last grosz and franc" },
-                { i: Globe2, t: "Official FX rates", d: "NBP, ECB and BNR, dated and sourced" },
-                { i: Sparkles, t: "AI spend guard", d: "Reserve before a run, settle after" },
-                { i: ShieldCheck, t: "Private by design", d: "Argon2id, 2-step sign-in, audit log" },
-              ].map(({ i: Icon, t, d }) => (
-                <li key={t} className="card flex gap-3 p-4">
-                  <Icon size={18} className="mt-0.5 shrink-0 text-accent" />
-                  <span>
-                    <span className="block font-medium">{t}</span>
-                    <span className="block text-xs text-muted">{d}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <p className="text-xs text-faint">Created by Arnold Rurangwa / Arnova Group</p>
+    <>
+      <h1 className="display text-3xl">Sign in to Our Money Hub</h1>
+      <p className="mt-2 text-sm" style={{ color: "var(--text2)" }}>Welcome back. This account is only for Our Money Hub — RAGI uses a separate sign-in.</p>
+      <div className="mt-8">
+        <ProviderButtons enabled={cfg?.providers ?? { google: false, apple: false }} />
+      </div>
+      <Divider />
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <Field label="Email">{(id) => <Input id={id} type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />}</Field>
+        <Field label="Password">
+          {(id) => (
+            <div className="relative">
+              <Input id={id} type={show ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required className="pr-16" />
+              <button type="button" className="absolute right-2 top-1/2 min-h-11 -translate-y-1/2 text-xs" style={{ color: "var(--text2)" }} aria-label={show ? "Hide password" : "Show password"} onClick={() => setShow((v) => !v)}>{show ? "Hide" : "Show"}</button>
+            </div>
+          )}
+        </Field>
+        <div className="flex justify-end">
+          <Link href="/forgot" className="text-xs font-medium" style={{ color: "var(--accent)" }}>Forgot password?</Link>
         </div>
-      </section>
-
-      {/* Form side */}
-      <section className="relative flex items-center justify-center px-5 py-12">
-        <div className="aurora opacity-30 lg:hidden" aria-hidden />
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-sm">
-          <div className="mb-10 lg:hidden">
-            <Wordmark />
-          </div>
-          <h2 className="display text-3xl">{mfa ? "Two-step sign-in" : mode === "signin" ? "Welcome back" : "Create your hub"}</h2>
-          <p className="mt-2 text-sm text-muted">
-            {mfa ? "Enter the 6-digit code from your authenticator app." : mode === "signin" ? (regOpen ? "Sign in, or create the owner account for this hub. RAGI uses a separate login." : "Sign in to your books. This account is only for Our Money Hub.") : (ownerSetup ? "One-time owner setup. " : "") + "Personal and Business workspaces are created, empty and ready. RAGI uses a separate login."}
-          </p>
-          {!mfa && regOpen && (
-            <div className="mt-6">
-              <Segmented label="Mode" value={mode} onChange={setMode} options={[{ value: "signin", label: "Sign in" }, { value: "register", label: "Create account" }]} />
-            </div>
-          )}
-          <form onSubmit={submit} className="mt-6 flex flex-col gap-4">
-            {mfa ? (
-              <Field label="Authenticator code">{(id) => <Input id={id} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} required />}</Field>
-            ) : (
-              <>
-                {mode === "register" && ownerSetup && (
-                  <Field label="Owner setup token" hint="The one-time token from the server environment">
-                    {(id) => <Input id={id} type="password" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} autoComplete="off" required />}
-                  </Field>
-                )}
-                {mode === "register" && <Field label="Your name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required />}</Field>}
-                <Field label="Email">{(id) => <Input id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />}</Field>
-                <Field label="Password" hint={mode === "register" ? "At least 12 characters" : undefined}>
-                  {(id) => <Input id={id} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 12 : undefined} required />}
-                </Field>
-              </>
-            )}
-            <ErrorNote error={error} />
-            <Button type="submit" disabled={busy} className="mt-1 h-11" icon={mfa ? <Fingerprint size={16} /> : <ArrowRight size={16} />}>
-              {mfa ? "Verify" : mode === "signin" ? "Sign in" : "Create account"}
-            </Button>
-          </form>
-          {demo && !mfa && (
-            <div className="mt-6 border-t border-line pt-6">
-              <Button variant="secondary" className="w-full" onClick={tryDemo} disabled={busy}>
-                Explore a private demo
-              </Button>
-              <p className="mt-2 text-center text-xs text-faint">A fresh, empty workspace just for you. No sample figures.</p>
-            </div>
-          )}
-          <p className="mt-10 text-center text-xs text-faint lg:hidden">Created by Arnold Rurangwa / Arnova Group</p>
-        </motion.div>
-      </section>
-    </div>
+        <ErrorNote error={error} />
+        <Button type="submit" disabled={busy} className="h-12">{busy ? "Signing in…" : "Sign in"}</Button>
+      </form>
+      {cfg?.demo_login && (
+        <div className="mt-6 border-t pt-6" style={{ borderColor: "var(--border)" }}>
+          <Button variant="secondary" className="w-full" onClick={tryDemo} disabled={busy}>Explore a private demo</Button>
+          <p className="mt-2 text-center text-xs" style={{ color: "var(--faint)" }}>A fresh, empty workspace just for you. No sample figures.</p>
+        </div>
+      )}
+      <p className="mt-6 text-xs" style={{ color: "var(--text2)" }}>
+        Accounts are by invite only. Have an invite link? Open it to create your account.
+        {cfg?.owner_setup && <>{" "}If you are setting this instance up, <Link href="/setup" className="underline">use the owner setup form</Link>.</>}
+      </p>
+    </>
   );
 }

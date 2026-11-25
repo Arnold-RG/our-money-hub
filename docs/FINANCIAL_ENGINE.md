@@ -3,7 +3,8 @@
 ## Money
 - Amounts are integers in minor units: PLN, EUR and USD have 2 decimals; RWF has 0. The API sends money as `{"amount": "12.34", "minor": 1234, "currency": "PLN"}` and never as a float.
 - Input parsing is strict and ASCII-only. `12,345` is ambiguous for a 2-decimal currency and is rejected. `1e3`, `1_000`, `+5`, `12.` and too many decimals (for example RWF `10.50`) are rejected, not rounded.
-- Conversion uses `Decimal` with banker's rounding (ROUND_HALF_EVEN). Splits use largest-remainder allocation, so parts always add up to the total.
+- Official NBP (and ECB/BNR fallback) rates are stored and used as published; they are never rounded before converting. Reports and displayed totals sum exact converted amounts, then round half-up once to the reporting currency's minor unit. `convert()` for a single stored amount still uses banker's rounding (ROUND_HALF_EVEN). Splits use largest-remainder allocation, so parts always add up to the total.
+- Refunds and reversals reduce their original category on a cash basis: they count on the refund or reversal date, not the original transaction date.
 - Adding two currencies raises an error. Totals in a reporting currency convert each line first. A line without a usable rate is excluded and listed, never estimated.
 
 ## Ledger

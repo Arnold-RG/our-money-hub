@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Building2, ChevronDown, LogOut, Moon, Search, Sun, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/providers/app-provider";
-import { CURRENCIES, type Currency } from "@/lib/money";
+import { SWITCHER_CURRENCIES, type Currency } from "@/lib/money";
 import { cx } from "@/components/ui";
 import { GROUPS, MORE, NAV } from "./nav";
 import { Wordmark, Logo } from "./logo";
@@ -66,22 +66,76 @@ function WorkspaceSwitcher() {
   );
 }
 
+interface RateRow {
+  base: string; quote: string; rate: string; effective_date: string | null;
+  source: string | null; stale?: boolean; provider?: string | null;
+}
+
+function rateLine(code: Currency, rates: RateRow[] | undefined): { text: string; stale: boolean; empty: boolean } {
+  if (code === "PLN") return { text: "Reporting default · Polish złoty", stale: false, empty: false };
+  const rows = rates ?? [];
+  const hit = rows.find((r) => (r.base === code && r.quote === "PLN") || (r.base === "PLN" && r.quote === code))
+    ?? rows.find((r) => r.base === code || r.quote === code);
+  if (!hit || !hit.rate) return { text: "No official rate on file", stale: false, empty: true };
+  const src = hit.source || hit.provider || "official";
+  const date = hit.effective_date ?? "date unknown";
+  const stale = Boolean(hit.stale);
+  return {
+    text: `${hit.rate} ${hit.base}→${hit.quote} · ${src} · ${date}${stale ? " · older than 2 Polish business days" : ""}`,
+    stale,
+    empty: false,
+  };
+}
+
 export function CurrencyLens({ compact }: { compact?: boolean }) {
   const { currency, setCurrency } = useApp();
+  const { data: rates } = useWs<RateRow[]>("/exchange-rates");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const current = rateLine(currency, rates);
   return (
-    <div role="radiogroup" aria-label="Reporting currency" className={cx("seg", compact && "scale-95")}>
-      {CURRENCIES.map((c) => (
-        <button
-          key={c}
-          role="radio"
-          aria-checked={c === currency}
-          aria-label={c}
-          onClick={() => setCurrency(c as Currency)}
-          className={c === currency ? "on" : ""}
-        >
-          {c}
-        </button>
-      ))}
+    <div ref={ref} className={cx("relative", compact && "scale-95")}>
+      <button
+        type="button"
+        className="flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-3 text-sm font-medium"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Reporting currency"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {currency}
+        <ChevronDown size={14} className="text-faint" />
+      </button>
+      {open && (
+        <div className="glass absolute right-0 top-12 z-50 w-80 rounded-2xl p-1.5 shadow-2xl" role="listbox" aria-label="Reporting currency">
+          {SWITCHER_CURRENCIES.map((c) => {
+            const info = rateLine(c as Currency, rates);
+            return (
+              <button
+                key={c}
+                role="option"
+                aria-selected={c === currency}
+                onClick={() => { setCurrency(c as Currency); setOpen(false); }}
+                className={cx("flex w-full flex-col items-start rounded-xl px-3 py-2.5 text-left text-sm hover:bg-surface-3", c === currency && "bg-surface-3")}
+              >
+                <span className="font-medium">{c}</span>
+                <span className={cx("mt-0.5 text-xs", info.stale ? "text-warning" : "text-faint")}>{info.text}</span>
+              </button>
+            );
+          })}
+          {(!rates || rates.length === 0) && (
+            <p className="px-3 py-2 text-xs text-faint">No official rates on file yet. Sync from NBP (or ECB/BNR) in Settings. We never show sample rates.</p>
+          )}
+          {current.stale && (
+            <p className="px-3 py-2 text-xs text-warning">The {currency} rate is older than 2 Polish business days. Amounts still convert, and the date is shown.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

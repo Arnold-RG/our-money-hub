@@ -61,7 +61,7 @@ def svc(api, monkeypatch, tmp_path):
     s = get_settings()
     monkeypatch.setattr(s, "ecosystem_keyring_file", str(f))
     monkeypatch.setattr(s, "omh_ragi_workspace_id", api.ws)
-    return TestClient(app)
+    return TestClient(app, base_url="https://testserver")
 
 
 def post(c, path, obj, **kw):
@@ -201,18 +201,19 @@ def test_finance_summary(api, svc):
 def test_registration_closed_by_default_and_owner_needs_setup_token(monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "allow_registration", False)
+    monkeypatch.setattr(s, "registration_mode", "closed")
     monkeypatch.setattr(s, "omh_owner_setup_token", "")
-    h = {"X-OMH-Client": "web"}
-    body = {"email": "first@example.com", "password": "x" * 12, "display_name": "Owner"}
-    c = TestClient(app)
-    assert c.get("/api/v1/auth/config").json()["registration_open"] is False
+    h = {"X-OMH-Client": "web", "Origin": "https://testserver"}
+    body = {"email": "first@example.com", "password": "correct-horse-battery", "display_name": "Owner"}
+    c = TestClient(app, base_url="https://testserver")
+    assert c.get("/api/v1/auth/config").json()["registration_mode"] == "closed"
     assert c.post("/api/v1/auth/register", json=body, headers=h).status_code == 403  # no token configured: closed
-    monkeypatch.setattr(s, "omh_owner_setup_token", "one-time-setup-token-for-tests")
+    monkeypatch.setattr(s, "omh_owner_setup_token", "one-time-setup-token-for-tests-ok")
     assert c.get("/api/v1/auth/config").json()["owner_setup"] is True
     assert c.post("/api/v1/auth/register", json={**body, "setup_token": "wrong"}, headers=h).status_code == 403
-    ok = c.post("/api/v1/auth/register", json={**body, "setup_token": "one-time-setup-token-for-tests"}, headers=h)
+    ok = c.post("/api/v1/auth/register", json={**body, "setup_token": "one-time-setup-token-for-tests-ok"}, headers=h)
     assert ok.status_code == 200
-    again = TestClient(app).post("/api/v1/auth/register", headers=h, json={**body, "email": "second@example.com",
-                                                                           "setup_token": "one-time-setup-token-for-tests"})
+    again = TestClient(app, base_url="https://testserver").post("/api/v1/auth/register", headers=h, json={**body, "email": "second@example.com",
+                                                                           "setup_token": "one-time-setup-token-for-tests-ok"})
     assert again.status_code == 403  # the token works once: an owner now exists
-    assert TestClient(app).get("/api/v1/auth/config").json()["registration_open"] is False
+    assert TestClient(app, base_url="https://testserver").get("/api/v1/auth/config").json()["registration_mode"] == "closed"

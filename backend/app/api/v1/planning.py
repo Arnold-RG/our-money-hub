@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.common import money_out, parse_money, today
 from app.core.config import get_settings
 from app.core.money import Money
-from app.core.permissions import WorkspaceContext, current_user, read_ws, write_ws
+from app.core.permissions import WorkspaceContext, current_user, owner_ws, read_ws, write_ws
 from app.core.service_auth import ServiceAuthError, is_service_call, verify
 from app.modules.currencies.service import Converter
 from app.database.models import (AIUsageRecord, Budget, BudgetReservation, FinancialAccount, SavingsGoal, Subscription,
@@ -49,7 +49,7 @@ def list_budgets(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depends
 
 
 @router.post("/budgets", status_code=201)
-def create_budget(body: BudgetIn, ctx: WorkspaceContext = Depends(write_ws), db: Session = Depends(get_db)):
+def create_budget(body: BudgetIn, ctx: WorkspaceContext = Depends(owner_ws), db: Session = Depends(get_db)):
     amount, cur = parse_money(body.amount, body.currency)
     if amount <= 0:
         raise HTTPException(422, "Budget must be greater than zero")
@@ -88,7 +88,7 @@ class BudgetPatch(BaseModel):
 
 
 @router.patch("/budgets/{bid}")
-def patch_budget(bid: str, body: BudgetPatch, ctx: WorkspaceContext = Depends(write_ws), db: Session = Depends(get_db)):
+def patch_budget(bid: str, body: BudgetPatch, ctx: WorkspaceContext = Depends(owner_ws), db: Session = Depends(get_db)):
     b = _budget(db, ctx, bid)
     before = b.allocated_minor
     if body.amount is not None:
@@ -107,7 +107,7 @@ def patch_budget(bid: str, body: BudgetPatch, ctx: WorkspaceContext = Depends(wr
 
 
 @router.delete("/budgets/{bid}")
-def delete_budget(bid: str, ctx: WorkspaceContext = Depends(write_ws), db: Session = Depends(get_db)):
+def delete_budget(bid: str, ctx: WorkspaceContext = Depends(owner_ws), db: Session = Depends(get_db)):
     """Budgets are plans, not posted history, so they may be removed (audited)."""
     b = _budget(db, ctx, bid)
     audit(db, workspace_id=ctx.workspace_id, user_id=ctx.user.id, action="budget.deleted", entity="budget",

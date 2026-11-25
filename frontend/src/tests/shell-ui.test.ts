@@ -6,12 +6,20 @@ const root = resolve(import.meta.dirname, "../");
 const read = (rel: string) => readFileSync(resolve(root, rel), "utf8");
 
 describe("Emerald ledger chrome", () => {
-  it("uses a currency segmented control, not an accent-filled chip", () => {
+  it("uses a currency dropdown with official rate date, source and stale, never sample rates", () => {
     const shell = read("components/layout/shell.tsx");
     expect(shell).toContain("CurrencyLens");
-    expect(shell).toContain('className={cx("seg"');
-    expect(shell).toMatch(/PLN|CURRENCIES/);
+    expect(shell).toContain('aria-label="Reporting currency"');
+    expect(shell).toContain("listbox");
+    expect(shell).toContain("SWITCHER_CURRENCIES");
+    expect(read("lib/money.ts")).toMatch(/SWITCHER_CURRENCIES[\s\S]*\[\s*"RWF"/);
+    expect(shell).toContain("/exchange-rates");
+    expect(shell).toContain("effective_date");
+    expect(shell).toContain("No official rate on file");
+    expect(shell).toContain("We never show sample rates");
+    expect(shell).toContain("older than 2 Polish business days");
     expect(shell).not.toMatch(/bg-\[var\(--omh-accent\)\]|filled chip/i);
+    expect(shell).not.toMatch(/mid-market|illustrative only/i);
   });
 
   it("keeps blur only on the phone tab bar, with solid fallbacks", () => {

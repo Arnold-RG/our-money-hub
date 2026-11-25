@@ -45,6 +45,8 @@ class NewTxn:
     source: str = "manual"
     import_hash: str | None = None
     idempotency_key: str | None = None
+    is_refund: bool = False
+    refund_of_id: str | None = None
 
 
 def get_account(db: Session, ws: str, account_id: str) -> FinancialAccount:
@@ -67,6 +69,8 @@ def fallback_category(db: Session, ws: str, direction: str) -> TransactionCatego
 def create(db: Session, ws: str, data: NewTxn, user_id: str | None) -> Transaction:
     if data.kind not in {"income", "expense", "transfer"}:
         raise TxnError("kind must be income, expense or transfer")
+    if data.is_refund and data.kind not in {"income", "expense"}:
+        raise TxnError("A refund must be of an income or expense category")
     if data.status not in {"confirmed", "pending"}:
         raise TxnError("status must be confirmed or pending")
     if data.amount_minor <= 0:
@@ -89,7 +93,9 @@ def create(db: Session, ws: str, data: NewTxn, user_id: str | None) -> Transacti
         else:
             cat = fallback_category(db, ws, data.kind)
         cat_id = cat.id
-        if data.kind == "income":
+        # Refunds flip cash direction and reduce the original category account.
+        refund = data.is_refund
+        if (data.kind == "income") ^ refund:
             lines = [ledger.Line(asset, currency, debit=data.amount_minor),
                      ledger.Line(cat.ledger_account_id, currency, credit=data.amount_minor)]
         else:
@@ -123,7 +129,8 @@ def create(db: Session, ws: str, data: NewTxn, user_id: str | None) -> Transacti
                       to_account_id=data.to_account_id if data.kind == "transfer" else None,
                       to_amount_minor=to_amount, category_id=cat_id, project=data.project,
                       subscription_id=data.subscription_id, journal_entry_id=entry.id,
-                      source=data.source, import_hash=data.import_hash, idempotency_key=data.idempotency_key)
+                      source=data.source, import_hash=data.import_hash, idempotency_key=data.idempotency_key,
+                      is_refund=data.is_refund, refund_of_id=data.refund_of_id)
     db.add(txn)
     db.flush()
     audit(db, workspace_id=ws, user_id=user_id, action="transaction.created", entity="transaction", entity_id=txn.id,

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Bot, Gauge, Plus } from "lucide-react";
 import type { BudgetView } from "@/lib/api";
 import { useWs } from "@/lib/hooks";
+import { useApp } from "@/providers/app-provider";
 import { Button, EmptyState, Modal, SectionTitle, Skeleton } from "@/components/ui";
 import { PageHeader } from "@/components/finance/page-header";
 import { BudgetForm } from "@/components/finance/forms";
@@ -14,6 +15,8 @@ function BudgetsInner() {
   const params = useSearchParams();
   const [open, setOpen] = useState<null | "category" | "ai">(params.get("new") === "1" ? "category" : null);
   const { data: budgets } = useWs<BudgetView[]>("/budgets");
+  const { workspace } = useApp();
+  const isOwner = workspace?.role === "owner";
   const cat = budgets?.filter((b) => b.scope === "category") ?? [];
   const ai = budgets?.filter((b) => b.scope === "ai") ?? [];
   return (
@@ -21,18 +24,22 @@ function BudgetsInner() {
       <PageHeader
         eyebrow="Budgets"
         title="Plan the month, guard the agents"
-        subtitle="Available = limit − spent − reserved. AI budgets are what every agent must ask before it runs."
+        subtitle="Budget versus actual spend is shown separately from reserved funds. Only the workspace owner can add or edit budgets."
         actions={
-          <>
-            <Button variant="secondary" onClick={() => setOpen("ai")} icon={<Bot size={16} />}>AI spend guard</Button>
-            <Button onClick={() => setOpen("category")} icon={<Plus size={16} />}>New budget</Button>
-          </>
+          isOwner ? (
+            <>
+              <Button variant="secondary" onClick={() => setOpen("ai")} icon={<Bot size={16} />}>AI spend guard</Button>
+              <Button onClick={() => setOpen("category")} icon={<Plus size={16} />}>New budget</Button>
+            </>
+          ) : (
+            <p className="text-xs text-muted">Only the workspace owner can add or edit budgets.</p>
+          )
         }
       />
       {!budgets ? (
         <Skeleton className="h-48" />
       ) : budgets.length === 0 ? (
-        <EmptyState icon={<Gauge size={20} />} title="No budgets yet" body="Set a monthly limit for a category like groceries or software, or an AI spend guard that agents must reserve against before they run." action={<Button onClick={() => setOpen("category")} icon={<Plus size={16} />}>Create a budget</Button>} />
+        <EmptyState icon={<Gauge size={20} />} title="No budgets yet" body="Set a monthly limit for a category like groceries or software, or an AI spend guard that agents must reserve against before they run." action={isOwner ? <Button onClick={() => setOpen("category")} icon={<Plus size={16} />}>Create a budget</Button> : undefined} />
       ) : (
         <div className="flex flex-col gap-8">
           {cat.length > 0 && (

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     omh_secret_key: str = ""
     omh_field_key: str = ""  # key material for encrypting sensitive fields (MFA secrets); falls back to secret key
     access_token_minutes: int = 60 * 12
-    cookie_secure: bool = False
+    cookie_secure: bool = True
     demo_login_enabled: bool = False  # only honoured when app_env == "development"
     default_reporting_currency: str = "PLN"
     cors_origins: str = "http://localhost:3420,http://127.0.0.1:3420"
@@ -34,8 +34,21 @@ class Settings(BaseSettings):
     omh_ragi_organization_id: str = "arnovagroup"
     # Registration: closed by default. The owner account is created once, with a one-time setup token
     # (OMH_OWNER_SETUP_TOKEN, set in the environment, never committed) on a database with no real users.
-    allow_registration: bool = False
+    allow_registration: bool = False  # deprecated; use registration_mode
+    registration_mode: str = "closed"  # closed | invite | open
     omh_owner_setup_token: str = ""
+    public_base_url: str = "http://localhost:3420"
+    forwarded_allow_ips: str = "127.0.0.1,::1"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    apple_client_id: str = ""
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""
+    email_verification_enabled: bool = False  # D4: no email provider; keep off
+    mfa_pending_minutes: int = 10
+    idle_timeout_minutes_privileged: int = 30
+    idle_timeout_minutes: int = 120
     rates_auto_sync: bool = False  # refresh official FX rates every 6h while the API runs
     lockout_attempts: int = 5
     lockout_minutes: int = 15
@@ -48,12 +61,21 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     s = Settings()
-    if s.app_env not in {"development", "test"} and s.is_sqlite:
-        raise RuntimeError("OMH needs PostgreSQL outside development (set DATABASE_URL)")
+    if s.app_env not in {"development", "test"}:
+        problems = []
+        if s.is_sqlite:
+            problems.append("DATABASE_URL must point to PostgreSQL")
+        if not s.omh_secret_key:
+            problems.append("OMH_SECRET_KEY must be set")
+        if not s.cookie_secure:
+            problems.append("COOKIE_SECURE must be true")
+        if s.demo_login_enabled:
+            problems.append("DEMO_LOGIN_ENABLED must be false")
+        if problems:
+            raise RuntimeError("Refusing to start outside development: " + "; ".join(problems))
     if not s.omh_secret_key:
-        if s.app_env not in {"development", "test"}:
-            raise RuntimeError("OMH_SECRET_KEY must be set outside development")
         import secrets
-
         s.omh_secret_key = secrets.token_urlsafe(48)
+    if s.allow_registration and s.registration_mode == "closed":
+        s.registration_mode = "open"  # transitional mapping
     return s

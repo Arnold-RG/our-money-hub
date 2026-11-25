@@ -8,16 +8,23 @@ from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
+
+from app.core.emails import EmailAddress
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core import invites
+from app.core.client_ip import client_ip
 from app.core.config import get_settings
 from app.core.money import CURRENCIES
-from app.core.permissions import current_user
-from app.core.security import (COOKIE_NAME, decrypt_field, encrypt_field, hash_password, load_session, new_session,
-                               new_totp_secret, revoke, verify_password, verify_totp)
-from app.database.models import User
+from app.core.passwords import hibp_pwned_count, validate_password
+from app.core.permissions import current_enrolment, current_user, require_recent_auth
+from app.core.ratelimit import backoff_state, clear_backoff, hit, record_failure
+from app.core.security import (COOKIE_NAME, LEGACY_COOKIE_NAME, decrypt_field, encrypt_field, hash_password,
+                               load_session, needs_rehash, new_session, new_totp_secret, read_token, revoke,
+                               token_hash, verify_password, verify_totp)
+from app.database.models import FinancialWorkspace, InstanceSetting, User, UserSession, WorkspaceMember
 from app.database.session import get_db
 from app.modules.audit.service import audit
 from app.modules.workspaces.service import bootstrap_user_workspaces, user_workspaces
@@ -27,49 +34,25 @@ DEMO_DOMAIN = "demo.ourmoneyhub.local"
 MFA_MAX_FAILURES = 5
 
 
-class _IpThrottle:
-    """Bounded per-IP throttle for registration/login bursts (account lockout is in the database)."""
-
-    def __init__(self, limit: int = 30, window: int = 300, max_keys: int = 10_000):
-        self.limit, self.window, self.max_keys = limit, window, max_keys
-        self.hits: OrderedDict[str, list[float]] = OrderedDict()
-
-    def check(self, key: str) -> None:
-        now = time.time()
-        hits = [t for t in self.hits.pop(key, []) if now - t < self.window]
-        if len(hits) >= self.limit:
-            self.hits[key] = hits
-            raise HTTPException(429, "Too many attempts from this network. Wait a few minutes.")
-        hits.append(now)
-        self.hits[key] = hits
-        while len(self.hits) > self.max_keys:
-            self.hits.popitem(last=False)
-
-    def clear(self) -> None:
-        self.hits.clear()
-
-
-throttle = _IpThrottle()
-
-
-def _ip(request: Request) -> str:
-    return request.client.host if request.client else "?"
-
-
 class RegisterIn(BaseModel):
     setup_token: str | None = Field(default=None, max_length=200)
-    email: EmailStr
-    password: str = Field(min_length=12, max_length=200)
+    invite_token: str | None = Field(default=None, max_length=200)
+    email: EmailAddress
+    password: str = Field(min_length=12, max_length=128)
     display_name: str = Field(min_length=1, max_length=120)
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
-    password: str = Field(max_length=200)
+    email: EmailAddress
+    password: str = Field(max_length=128)
 
 
 class CodeIn(BaseModel):
     code: str = Field(min_length=6, max_length=8)
+
+
+class RecoveryIn(BaseModel):
+    code: str = Field(min_length=8, max_length=16)
 
 
 class MeUpdate(BaseModel):
@@ -84,10 +67,51 @@ def me_view(db: Session, u: User) -> dict:
                            for w, r in user_workspaces(db, u.id)]}
 
 
+HOST_ATTRS = dict(httponly=True, secure=True, samesite="lax", path="/")
+
+
 def _set_cookie(resp: Response, token: str, minutes: int | None = None) -> None:
     s = get_settings()
-    resp.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax", secure=s.cookie_secure,
-                    max_age=(minutes or s.access_token_minutes) * 60, path="/")
+    resp.set_cookie(COOKIE_NAME, token, max_age=(minutes or s.access_token_minutes) * 60, **HOST_ATTRS)
+    if LEGACY_COOKIE_NAME != COOKIE_NAME:
+        resp.delete_cookie(LEGACY_COOKIE_NAME, path="/")
+
+
+def _clear_cookie(resp: Response) -> None:
+    resp.delete_cookie(COOKIE_NAME, path="/", secure=True, httponly=True, samesite="lax")
+    resp.delete_cookie(LEGACY_COOKIE_NAME, path="/")
+
+
+GENERIC_LOGIN = "Email or password is incorrect"
+GENERIC_LOCK = "Too many attempts. Try again later."
+
+
+
+def _set_invite_cookie(resp: Response, token: str) -> None:
+    resp.set_cookie(invites.INVITE_COOKIE, token, max_age=invites.INVITE_COOKIE_MAX_AGE, **HOST_ATTRS)
+
+
+def _clear_invite_cookie(resp: Response) -> None:
+    resp.delete_cookie(invites.INVITE_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+
+
+def _http_retry(status: int, detail: str, retry: int | None = None) -> HTTPException:
+    headers = {"Retry-After": str(retry)} if retry else None
+    return HTTPException(status, detail, headers=headers)
+
+
+def _owner_setup_pending(db: Session) -> bool:
+    s = get_settings()
+    if not s.omh_owner_setup_token:
+        return False
+    if db.get(InstanceSetting, "owner_bootstrapped"):
+        return False
+    return db.scalar(select(func.count()).select_from(User).where(User.is_demo.is_(False))) == 0
+
+
+def _user_is_owner(db: Session, user_id: str) -> bool:
+    return db.scalar(select(WorkspaceMember).where(
+        WorkspaceMember.user_id == user_id, WorkspaceMember.role == "owner")) is not None
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -99,83 +123,133 @@ def demo_enabled() -> bool:
     return s.demo_login_enabled and s.app_env == "development"
 
 
-def _no_real_users(db: Session) -> bool:
-    return db.scalar(select(func.count()).select_from(User).where(User.is_demo.is_(False))) == 0
 
-
-def owner_setup_pending(db: Session) -> bool:
-    """Owner bootstrap: only with a configured one-time setup token, and only while no real account exists."""
-    return bool(get_settings().omh_owner_setup_token) and _no_real_users(db)
-
-
-def registration_open(db: Session) -> bool:
-    return get_settings().allow_registration or owner_setup_pending(db)
 
 
 @router.get("/config")
 def auth_config(db: Session = Depends(get_db)):
-    return {"demo_login": demo_enabled(), "mfa": "totp", "registration_open": registration_open(db),
-            "owner_setup": owner_setup_pending(db) and not get_settings().allow_registration}
+    s = get_settings()
+    return {
+        "app": "omh",
+        "demo_login": demo_enabled(),
+        "mfa": "totp",
+        "registration_mode": s.registration_mode,
+        "owner_setup": _owner_setup_pending(db),
+        "providers": {"google": bool(s.google_client_id), "apple": bool(s.apple_client_id)},
+        "password_reset": "cli",
+        "email_verification": bool(s.email_verification_enabled),
+    }
 
 
 @router.post("/register")
 def register(body: RegisterIn, resp: Response, request: Request, db: Session = Depends(get_db)):
-    throttle.check(f"reg:{_ip(request)}")
     s = get_settings()
-    if not s.allow_registration:
-        token = s.omh_owner_setup_token
-        if not (owner_setup_pending(db) and body.setup_token
-                and hmac.compare_digest(body.setup_token.encode(), token.encode())):
-            raise HTTPException(403, "Registration is closed. Ask the owner for access.")
+    ip = client_ip(request)
+    allowed, retry = hit(db, f"register:ip:{ip}", 5, 3600)
+    if not allowed:
+        raise _http_retry(429, GENERIC_LOCK, retry)
+    setup_ok = bool(
+        _owner_setup_pending(db) and body.setup_token and s.omh_owner_setup_token
+        and len(s.omh_owner_setup_token) >= 32
+        and hmac.compare_digest(body.setup_token.encode(), s.omh_owner_setup_token.encode())
+    )
+    invite_raw = (body.invite_token or request.cookies.get(invites.INVITE_COOKIE) or "").strip() or None
+    invite_flow = (not setup_ok) and s.registration_mode == "invite" and bool(invite_raw)
+    open_flow = (not setup_ok) and (not invite_flow) and s.registration_mode == "open"
+    if not setup_ok and not invite_flow and not open_flow:
+        raise HTTPException(403, invites.GENERIC if invite_raw else "Registration is closed. Ask the owner for an invite.")
+    try:
+        validate_password(body.password, email=body.email, name=body.display_name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    count, breach = hibp_pwned_count(body.password)
+    if breach == "pwned":
+        raise HTTPException(422, "Please choose a different password. This one appears in a known data breach.")
     email = body.email.lower()
+    invite_row = None
+    if invite_raw and s.registration_mode == "invite":
+        try:
+            invite_row = invites.consume(db, invite_raw, email)
+        except ValueError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        invite_flow = True
     if email.endswith("@" + DEMO_DOMAIN) or db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "An account with this email already exists")
     u = User(email=email, display_name=body.display_name.strip(), password_hash=hash_password(body.password))
     db.add(u)
     db.flush()
-    bootstrap_user_workspaces(db, u)
-    audit(db, workspace_id=None, user_id=u.id, action="user.registered", entity="user", entity_id=u.id)
-    token = new_session(db, u.id)
+    if invite_flow and invite_row.workspace_id:
+        db.add(WorkspaceMember(workspace_id=invite_row.workspace_id, user_id=u.id, role=invite_row.role or "viewer"))
+    else:
+        bootstrap_user_workspaces(db, u)
+    if setup_ok:
+        db.add(InstanceSetting(key="owner_bootstrapped", value="1"))
+        try:
+            db.flush()
+        except Exception:
+            db.rollback()
+            raise HTTPException(409, "Owner setup has already been used")
+    enrol = _user_is_owner(db, u.id)
+    audit(db, workspace_id=None, user_id=u.id, action="user.registered", entity="user", entity_id=u.id,
+          detail={"breach_check": breach, "owner_setup": setup_ok, "invite": bool(invite_flow)})
+    if invite_flow:
+        audit(db, workspace_id=invite_row.workspace_id, user_id=u.id, action="auth.invite.accepted",
+              entity="user", entity_id=u.id, detail={"role": invite_row.role})
+    token = new_session(db, u.id, enrolment_required=enrol)
     db.commit()
-    _set_cookie(resp, token)
+    _set_cookie(resp, token, s.mfa_pending_minutes if enrol else None)
+    if invite_flow:
+        _clear_invite_cookie(resp)
+    if enrol:
+        return {"mfa_required": False, "mfa_enrolment_required": True}
     return me_view(db, u)
 
 
 @router.post("/login")
 def login(body: LoginIn, resp: Response, request: Request, db: Session = Depends(get_db)):
-    throttle.check(f"login:{_ip(request)}")
     s = get_settings()
-    u = db.scalar(select(User).where(User.email == body.email.lower()))
-    now = datetime.now(UTC)
-    if u and u.locked_until and _aware(u.locked_until) > now:
-        verify_password(body.password, None)  # same work either way
-        raise HTTPException(423, "Too many failed attempts. This account is locked for a few minutes.")
+    ip = client_ip(request)
+    email = body.email.lower()
+    allowed, retry = hit(db, f"login:ip:{ip}", 20, 300)
+    if not allowed:
+        raise _http_retry(429, GENERIC_LOCK, retry)
+    allowed, retry = hit(db, f"login:acct-ip:{email}:{ip}", 10, 900)
+    if not allowed:
+        raise _http_retry(429, GENERIC_LOCK, retry)
+    blocked, retry = backoff_state(db, f"login:email:{email}")
+    if blocked:
+        raise _http_retry(429, GENERIC_LOCK, retry)
+    u = db.scalar(select(User).where(User.email == email))
     ok = verify_password(body.password, u.password_hash if u and not u.is_demo else None)
     if not ok:
+        record_failure(db, f"login:email:{email}")
         if u and not u.is_demo:
             u.failed_logins += 1
-            if u.failed_logins >= s.lockout_attempts:
-                u.locked_until = now + timedelta(minutes=s.lockout_minutes)
-                u.failed_logins = 0
-                audit(db, workspace_id=None, user_id=u.id, action="user.locked", entity="user", entity_id=u.id)
-            db.commit()
-        raise HTTPException(401, "Email or password is incorrect")
+            audit(db, workspace_id=None, user_id=u.id, action="user.login.failed", entity="user", entity_id=u.id)
+        db.commit()
+        raise HTTPException(401, GENERIC_LOGIN)
     u.failed_logins, u.locked_until = 0, None
+    clear_backoff(db, f"login:email:{email}")
+    if needs_rehash(u.password_hash):
+        u.password_hash = hash_password(body.password)
+    enrol = (not u.mfa_enabled) and _user_is_owner(db, u.id)
     if u.mfa_enabled:
         token = new_session(db, u.id, mfa_pending=True)
         db.commit()
-        _set_cookie(resp, token, 10)
-        return {"mfa_required": True}
-    token = new_session(db, u.id)
+        _set_cookie(resp, token, s.mfa_pending_minutes)
+        return {"mfa_required": True, "mfa_enrolment_required": False}
+    token = new_session(db, u.id, enrolment_required=enrol)
     audit(db, workspace_id=None, user_id=u.id, action="user.login", entity="user", entity_id=u.id)
     db.commit()
-    _set_cookie(resp, token)
+    _set_cookie(resp, token, s.mfa_pending_minutes if enrol else None)
+    if enrol:
+        return {"mfa_required": False, "mfa_enrolment_required": True}
     return me_view(db, u)
 
 
 @router.post("/mfa/verify")
 def mfa_verify(body: CodeIn, request: Request, resp: Response, db: Session = Depends(get_db)):
-    token = request.cookies.get(COOKIE_NAME)
+    token = read_token(request)
     sess = load_session(db, token, allow_mfa_pending=True)
     if not sess or not sess.mfa_pending:
         raise HTTPException(401, "Sign in again")
@@ -198,7 +272,7 @@ def mfa_verify(body: CodeIn, request: Request, resp: Response, db: Session = Dep
 
 
 @router.post("/mfa/setup")
-def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def mfa_setup(user: User = Depends(current_enrolment), db: Session = Depends(get_db)):
     if user.is_demo:
         raise HTTPException(403, "Not available in the demo")
     if user.mfa_enabled:
@@ -212,16 +286,53 @@ def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db))
 
 
 @router.post("/mfa/enable")
-def mfa_enable(body: CodeIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def mfa_enable(body: CodeIn, request: Request, resp: Response, user: User = Depends(current_enrolment), db: Session = Depends(get_db)):
     if not user.mfa_secret_enc:
         raise HTTPException(409, "Start setup first")
     counter = verify_totp(decrypt_field(user.mfa_secret_enc), body.code, user.mfa_last_counter)
     if counter is None:
         raise HTTPException(422, "That code didn't work")
     user.mfa_enabled, user.mfa_last_counter = True, counter
+    from app.core.recovery_codes import issue_codes
+    codes = issue_codes(db, user.id)
+    # rotate the enrolment session into a full session
+    prev = load_session(db, read_token(request), allow_enrolment=True)
+    if prev:
+        prev.revoked_at = datetime.now(UTC)
+        prev.enrolment_required = False
+    token = new_session(db, user.id)
     audit(db, workspace_id=None, user_id=user.id, action="user.mfa_enabled", entity="user", entity_id=user.id)
     db.commit()
-    return me_view(db, user)
+    _set_cookie(resp, token)
+    view = me_view(db, user)
+    view["recovery_codes"] = codes
+    view["mfa_enrolment_required"] = False
+    return view
+
+
+@router.post("/mfa/recovery")
+def mfa_recovery(body: RecoveryIn, request: Request, resp: Response, db: Session = Depends(get_db)):
+    token = read_token(request)
+    sess = load_session(db, token, allow_mfa_pending=True)
+    if not sess or not sess.mfa_pending:
+        raise HTTPException(401, "Sign in again")
+    u = db.get(User, sess.user_id)
+    from app.core.recovery_codes import consume_code
+    if not u or not consume_code(db, u.id, body.code):
+        if sess:
+            sess.mfa_failures += 1
+            if sess.mfa_failures >= MFA_MAX_FAILURES:
+                sess.revoked_at = datetime.now(UTC)
+                if u:
+                    audit(db, workspace_id=None, user_id=u.id, action="user.mfa_locked", entity="user", entity_id=u.id)
+            db.commit()
+        raise HTTPException(401, "That backup code didn't match")
+    sess.revoked_at = datetime.now(UTC)
+    full = new_session(db, u.id)
+    audit(db, workspace_id=None, user_id=u.id, action="user.login", entity="user", entity_id=u.id, detail={"mfa": "recovery"})
+    db.commit()
+    _set_cookie(resp, full)
+    return me_view(db, u)
 
 
 @router.post("/demo")
@@ -229,7 +340,9 @@ def demo(resp: Response, request: Request, db: Session = Depends(get_db)):
     """Private, EMPTY throwaway workspace per visitor (no sample figures). Development only, off by default."""
     if not demo_enabled():
         raise HTTPException(404, "Demo login is disabled")
-    throttle.check(f"demo:{_ip(request)}")
+    allowed, retry = hit(db, f"demo:ip:{client_ip(request)}", 20, 300)
+    if not allowed:
+        raise _http_retry(429, GENERIC_LOCK, retry)
     u = User(email=f"demo-{uuid.uuid4().hex[:12]}@{DEMO_DOMAIN}", display_name="Demo", is_demo=True,
              password_hash=hash_password(secrets.token_urlsafe(32)))
     db.add(u)
@@ -243,9 +356,9 @@ def demo(resp: Response, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/logout")
 def logout(request: Request, resp: Response, db: Session = Depends(get_db)):
-    revoke(db, request.cookies.get(COOKIE_NAME))
+    revoke(db, read_token(request))
     db.commit()
-    resp.delete_cookie(COOKIE_NAME, path="/")
+    _clear_cookie(resp)
     return {"ok": True}
 
 
@@ -265,3 +378,83 @@ def update_me(body: MeUpdate, user: User = Depends(current_user), db: Session = 
         user.reporting_currency = cur
     db.commit()
     return me_view(db, user)
+
+
+@router.post("/oauth/{provider}/start")
+def oauth_start(provider: str):
+    if provider not in {"google", "apple"}:
+        raise HTTPException(404, "Unknown provider")
+    s = get_settings()
+    enabled = (provider == "google" and s.google_client_id) or (provider == "apple" and s.apple_client_id)
+    if not enabled:
+        raise HTTPException(503, f"{provider.title()} sign-in is not configured yet")
+    raise HTTPException(503, f"{provider.title()} sign-in is not configured yet")
+
+
+@router.post("/email/verify")
+def email_verify():
+    if not get_settings().email_verification_enabled:
+        raise HTTPException(404, "Email verification is not enabled")
+    raise HTTPException(503, "No email provider is connected")
+
+
+@router.post("/email/resend")
+def email_resend():
+    if not get_settings().email_verification_enabled:
+        raise HTTPException(404, "Email verification is not enabled")
+    raise HTTPException(503, "No email provider is connected")
+
+
+@router.post("/password/forgot", status_code=202)
+def password_forgot():
+    """No email provider (D4). Always the same response; the owner resets passwords via CLI."""
+    return {"status": "accepted", "delivery": "cli",
+            "message": "Ask the owner to reset your password. They run a command on the server."}
+
+
+
+class InvitePreviewIn(BaseModel):
+    token: str | None = Field(default=None, max_length=200)
+
+
+class InviteCreateIn(BaseModel):
+    email: EmailAddress
+    role: str = "viewer"
+    workspace_id: str
+
+
+@router.post("/invite/preview")
+def invite_preview(request: Request, resp: Response, db: Session = Depends(get_db),
+                   body: InvitePreviewIn | None = None):
+    if get_settings().registration_mode != "invite":
+        raise HTTPException(403, invites.GENERIC)
+    raw = ((body.token if body else None) or request.cookies.get(invites.INVITE_COOKIE) or "").strip()
+    row = invites.lookup(db, raw)
+    if not invites.is_usable(row):
+        _clear_invite_cookie(resp)
+        raise HTTPException(403, invites.GENERIC)
+    _set_invite_cookie(resp, raw)
+    return invites.preview(db, row)
+
+
+@router.post("/invites")
+def create_invite(body: InviteCreateIn, request: Request, db: Session = Depends(get_db),
+                  user: User = Depends(require_recent_auth())):
+    # Must be an owner of the target workspace.
+    m = db.scalar(select(WorkspaceMember).where(
+        WorkspaceMember.workspace_id == body.workspace_id, WorkspaceMember.user_id == user.id))
+    if not m or m.role != "owner":
+        raise HTTPException(403, "Only a workspace owner can create invites")
+    if get_settings().registration_mode != "invite":
+        raise HTTPException(403, "Set registration mode to invite before creating invites")
+    try:
+        raw = invites.issue(db, email=str(body.email), role=body.role,
+                            workspace_id=body.workspace_id, created_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    audit(db, workspace_id=body.workspace_id, user_id=user.id, action="auth.invite.created",
+          entity="user", entity_id=user.id, detail={"email": str(body.email).lower(), "role": body.role})
+    db.commit()
+    base = get_settings().public_base_url.rstrip("/")
+    return {"email": str(body.email).lower(), "role": body.role, "workspace_id": body.workspace_id,
+            "expires_in_hours": 72, "invite_url": f"{base}/invite#{raw}", "token": raw}

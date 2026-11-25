@@ -1,4 +1,5 @@
 import type { Currency, Money } from "./money";
+export type { Currency, Money };
 
 let workspaceId: string | null = null;
 export function setWorkspace(id: string | null) {
@@ -56,8 +57,8 @@ export interface Txn {
 }
 export interface BudgetView {
   id: string; name: string; scope: "category" | "ai"; category_id: string | null; ai_provider: string | null; currency: Currency;
-  allocated: Money; actual: Money; reserved: Money; available: Money; utilization: string; committed_utilization: string;
-  state: "on_track" | "warning" | "exceeded"; alert_threshold_pct: number; hard_limit: boolean; period: string; unconverted: Record<string, number>;
+  allocated: Money; actual: Money; actual_spend?: Money; reserved: Money; available: Money; utilization: string; committed_utilization: string;
+  state: "on_track" | "warning" | "exceeded"; over_budget?: boolean; alert_threshold_pct: number; hard_limit: boolean; period: string; unconverted: Record<string, number>;
 }
 export interface Reservation { id: string; budget_id: string; purpose: string; agent_id: string | null; amount: Money; status: string; period: string; created_at: string }
 export interface Sub {

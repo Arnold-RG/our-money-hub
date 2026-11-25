@@ -163,6 +163,8 @@ class TxnIn(BaseModel):
     to_account_id: str | None = None
     to_amount: str | None = None
     project: str | None = Field(default=None, max_length=120)
+    is_refund: bool = False
+    refund_of_id: str | None = None
 
 
 class ReverseIn(BaseModel):
@@ -188,6 +190,7 @@ def txn_view(t: Transaction, accounts: dict, cats: dict) -> dict:
             "category_id": t.category_id, "category": cats[t.category_id].name if t.category_id in cats else None,
             "project": t.project, "source": t.source, "subscription_id": t.subscription_id,
             "reversal_of_id": t.reversal_of_id, "reversed_by_id": t.reversed_by_id,
+            "is_refund": t.is_refund, "refund_of_id": t.refund_of_id,
             "journal_entry_id": t.journal_entry_id}
 
 
@@ -236,7 +239,8 @@ def create_transaction(body: TxnIn, ctx: WorkspaceContext = Depends(write_ws), d
         t = txns.create(db, ctx.workspace_id, txns.NewTxn(
             kind=body.kind, account_id=body.account_id, amount_minor=amount, currency=cur, txn_date=body.date,
             description=body.description, status=body.status, category_id=body.category_id, payee=body.payee,
-            to_account_id=body.to_account_id, to_amount_minor=to_amount, project=body.project), ctx.user.id)
+            to_account_id=body.to_account_id, to_amount_minor=to_amount, project=body.project,
+            is_refund=body.is_refund, refund_of_id=body.refund_of_id), ctx.user.id)
     except txns.TxnError as e:
         raise HTTPException(422, str(e)) from e
     if t.kind == "expense" and t.status == "confirmed" and t.category_id:

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.common import today
 from app.core.dates import parse_month
+from app.core.holidays import is_stale_rate
 from app.core.money import CURRENCIES, CURRENCY_NAMES, MoneyError, normalize_currency, parse_amount
 from app.core.config import get_settings
 from app.core.permissions import WorkspaceContext, read_ws, write_ws
@@ -70,10 +71,14 @@ def report_limits(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depend
 
 
 # ---------- exchange rates (global reference data) ----------
-def rate_view(r) -> dict:
+def rate_view(r, on=None) -> dict:
+    from datetime import date as _date
+    on = on or _date.today()
+    stale = bool(r.effective_date and is_stale_rate(r.effective_date, on))
     return {"id": r.id, "base": r.base, "quote": r.quote, "rate": format(Decimal(r.rate).normalize(), "f"),
             "effective_date": r.effective_date.isoformat(), "source": r.source, "provider": r.provider, "via": r.via,
-            "rate_type": r.rate_type, "source_url": r.source_url, "fetched_at": r.fetched_at.isoformat()}
+            "rate_type": r.rate_type, "source_url": r.source_url, "fetched_at": r.fetched_at.isoformat(),
+            "stale": stale}
 
 
 @router.get("/currencies")
@@ -89,11 +94,13 @@ def list_rates(ctx: WorkspaceContext = Depends(read_ws), db: Session = Depends(g
 @router.get("/exchange-rates/quote")
 def quote(base: str, quote: str, on: date | None = None, ctx: WorkspaceContext = Depends(read_ws),
           db: Session = Depends(get_db)):
-    q = fx.get_rate(db, base, quote, on or today(), ctx.workspace_id)
+    when = on or today()
+    q, stale = fx.get_rate_ex(db, base, quote, when, ctx.workspace_id)
     if not q:
         raise HTTPException(404, f"No {base}→{quote} rate on file")
     return {"base": base.upper(), "quote": quote.upper(), "rate": str(q.rate.quantize(Decimal("0.0000000001"))),
-            "effective_date": q.effective_date.isoformat() if q.effective_date else None, "source": q.source}
+            "effective_date": q.effective_date.isoformat() if q.effective_date else None, "source": q.source,
+            "stale": stale}
 
 
 class RateIn(BaseModel):

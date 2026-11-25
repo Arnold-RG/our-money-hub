@@ -4,7 +4,7 @@ from fastapi import Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import COOKIE_NAME, load_session
+from app.core.security import load_session, read_token
 from app.database.models import User, WorkspaceMember
 from app.database.session import get_db
 
@@ -12,14 +12,25 @@ ROLE_RANK = {"viewer": 0, "editor": 1, "owner": 2}
 
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    token = request.cookies.get(COOKIE_NAME)
-    auth = request.headers.get("authorization", "")
-    if not token and auth.lower().startswith("bearer "):
-        token = auth[7:]
+    # Session tokens are cookie-only. Authorization: Bearer is not accepted (P0).
+    token = read_token(request)
     sess = load_session(db, token)
     user = db.get(User, sess.user_id) if sess else None
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
+    if getattr(sess, "enrolment_required", False):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Set up two-factor authentication to continue")
+    return user
+
+
+def current_enrolment(request: Request, db: Session = Depends(get_db)) -> User:
+    """Password-verified session that may still need MFA enrolment."""
+    sess = load_session(db, read_token(request), allow_enrolment=True)
+    user = db.get(User, sess.user_id) if sess else None
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
+    if sess.mfa_pending:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Verification code required")
     return user
 
 
@@ -59,3 +70,21 @@ class WorkspaceContext:
 
 read_ws = WorkspaceAccess("viewer")
 write_ws = WorkspaceAccess("editor")
+
+
+owner_ws = WorkspaceAccess("owner")
+
+
+
+def require_recent_auth(max_age: int = 600):
+    def _dep(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)) -> User:
+        sess = load_session(db, read_token(request))
+        reauth = getattr(sess, "reauth_at", None) if sess else None
+        if reauth and reauth.tzinfo is None:
+            from datetime import UTC
+            reauth = reauth.replace(tzinfo=UTC)
+        from datetime import UTC, datetime
+        if not sess or not reauth or (datetime.now(UTC) - reauth).total_seconds() > max_age:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Reauthentication required")
+        return user
+    return _dep

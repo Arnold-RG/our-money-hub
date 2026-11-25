@@ -50,6 +50,8 @@ class User(TimestampMixin, Base):
     mfa_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-encrypted TOTP secret
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_last_counter: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # replay guard
+    mfa_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mfa_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     memberships: Mapped[list[WorkspaceMember]] = relationship(back_populates="user")
 
 
@@ -64,6 +66,9 @@ class UserSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mfa_pending: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_failures: Mapped[int] = mapped_column(Integer, default=0)
+    enrolment_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reauth_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class FinancialWorkspace(TimestampMixin, Base):
@@ -206,6 +211,8 @@ class Transaction(TimestampMixin, Base):
     reversed_by_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
     import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(20), default="manual")  # manual | csv | subscription | ai_usage
+    is_refund: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    refund_of_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
     __table_args__ = (
         CheckConstraint("amount_minor > 0", name="ck_txn_positive"),
@@ -344,3 +351,89 @@ class EventInbox(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     result: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+
+class MfaRecoveryCode(Base):
+    __tablename__ = "mfa_recovery_codes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class InstanceSetting(Base):
+    __tablename__ = "instance_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PersonalFinanceEntry(TimestampMixin, Base):
+    """Cash-basis personal finance line (income, living, usage, savings)."""
+    __tablename__ = "personal_finance_entries"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(20))  # income | living | usage | savings
+    label: Mapped[str] = mapped_column(String(200))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3))
+    occurred_on: Mapped[date] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_refund: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    __table_args__ = (
+        CheckConstraint("category in ('income','living','usage','savings')", name="ck_pf_category"),
+        CheckConstraint("currency in ('PLN','RWF','EUR','USD','GBP')", name="ck_pf_currency"),
+    )
+
+
+class FutureProject(TimestampMixin, Base):
+    """Planned work with a budget. Money lives only in Our Money Hub."""
+    __tablename__ = "future_projects"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("financial_workspaces.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    planned_minor: Mapped[int] = mapped_column(BigInteger)
+    funded_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="PLN")
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    __table_args__ = (
+        CheckConstraint("planned_minor >= 0", name="ck_fp_planned"),
+        CheckConstraint("funded_minor >= 0", name="ck_fp_funded"),
+        CheckConstraint("currency in ('PLN','RWF','EUR','USD','GBP')", name="ck_fp_currency"),
+    )
+
+
+
+class RateLimitEvent(Base):
+    __tablename__ = "rate_limit_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    bucket: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class AuthBackoff(Base):
+    __tablename__ = "auth_backoffs"
+    key: Mapped[str] = mapped_column(String(320), primary_key=True)
+    failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    delay_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+
+class AuthToken(Base):
+    """Hashed, single-use tokens: invites (and consumed setup markers)."""
+    __tablename__ = "auth_tokens"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # invite | setup
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("financial_workspaces.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
