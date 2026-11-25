@@ -63,15 +63,22 @@ class RecoveryIn(BaseModel):
     code: str = Field(min_length=8, max_length=16)
 
 
+class RecoveryRegenerateIn(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    code: str = Field(min_length=6, max_length=8)
+
+
 class MeUpdate(BaseModel):
     display_name: str | None = Field(default=None, max_length=120)
     reporting_currency: str | None = None
 
 
 def me_view(db: Session, u: User) -> dict:
+    from app.core.recovery_codes import remaining_count
     return {"id": u.id, "email": u.email, "username": u.username, "display_name": u.display_name, "is_demo": u.is_demo,
             "reporting_currency": u.reporting_currency, "mfa_enabled": u.mfa_enabled,
             "has_password": bool(u.password_hash),
+            "recovery_codes_remaining": remaining_count(db, u.id),
             "workspaces": [{"id": w.id, "name": w.name, "kind": w.kind, "base_currency": w.base_currency, "role": r}
                            for w, r in user_workspaces(db, u.id)]}
 
@@ -334,6 +341,43 @@ def mfa_enable(body: CodeIn, request: Request, resp: Response, user: User = Depe
     view = me_view(db, user)
     view["recovery_codes"] = codes
     view["mfa_enrolment_required"] = False
+    return view
+
+
+@router.post("/mfa/recovery-codes/regenerate")
+def mfa_recovery_codes_regenerate(body: RecoveryRegenerateIn, request: Request,
+                                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Replace unused recovery codes after the current password and a fresh TOTP code."""
+    if user.is_demo:
+        raise HTTPException(403, "Not available in the demo")
+    ip = client_ip(request)
+    allowed, retry = hit(db, f"recovery-regen:user:{user.id}", 5, 3600)
+    if not allowed:
+        db.commit()
+        raise _http_retry(429, GENERIC_LOCK, retry)
+    allowed, retry = hit(db, f"recovery-regen:ip:{ip}", 10, 3600)
+    if not allowed:
+        db.commit()
+        raise _http_retry(429, GENERIC_LOCK, retry)
+    if not user.mfa_enabled or not user.mfa_secret_enc:
+        db.commit()
+        raise HTTPException(409, "Two-step sign-in is not on")
+    ok = verify_password(body.password, user.password_hash if user.password_hash else None)
+    if not ok:
+        db.commit()
+        raise HTTPException(422, "That password didn't match")
+    counter = verify_totp(decrypt_field(user.mfa_secret_enc), body.code, user.mfa_last_counter)
+    if counter is None:
+        db.commit()
+        raise HTTPException(422, "That code didn't work")
+    user.mfa_last_counter = counter
+    from app.core.recovery_codes import issue_codes
+    codes = issue_codes(db, user.id)
+    audit(db, workspace_id=None, user_id=user.id, action="user.mfa_recovery_regenerated",
+          entity="user", entity_id=user.id)
+    db.commit()
+    view = me_view(db, user)
+    view["recovery_codes"] = codes
     return view
 
 

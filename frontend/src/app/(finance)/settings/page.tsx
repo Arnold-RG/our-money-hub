@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, Landmark, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Copy, Download, ExternalLink, Landmark, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { api, type Rate } from "@/lib/api";
 import { useWs } from "@/lib/hooks";
 import { refreshAll, useApp } from "@/providers/app-provider";
@@ -240,6 +240,143 @@ function Security() {
   );
 }
 
+function RecoveryCodesCard() {
+  const { me, refreshMe } = useApp();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (!me?.mfa_enabled) return null;
+  const remaining = me.recovery_codes_remaining ?? 0;
+
+  const resetForm = () => {
+    setOpen(false);
+    setPassword("");
+    setCode("");
+    setError(null);
+  };
+
+  return (
+    <Card>
+      <SectionTitle title="New recovery codes" hint="Each code signs you in once if you lose your authenticator." />
+      {codes ? (
+        <div className="min-w-0">
+          <p className="mb-3 text-sm text-warning" role="status">Old codes no longer work. Save these now.</p>
+          <ul className="grid grid-cols-2 gap-2 font-mono text-xs sm:text-sm">
+            {codes.map((c) => (
+              <li key={c} className="min-w-0 truncate rounded-xl border border-line bg-surface-3 px-3 py-2">{c}</li>
+            ))}
+          </ul>
+          <div className="mt-4 flex min-w-0 flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="secondary" className="w-full sm:w-auto" icon={<Copy size={14} />} onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(codes.join("\n"));
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 2000);
+              } catch {
+                setError("Could not copy. Select the codes and copy them yourself.");
+              }
+            }}>{copied ? "Copied" : "Copy all"}</Button>
+            <Button type="button" variant="secondary" className="w-full sm:w-auto" icon={<Download size={14} />} onClick={() => {
+              const blob = new Blob([`${codes.join("\n")}\n`], { type: "text/plain" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "our-money-hub-recovery-codes.txt";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}>Download .txt</Button>
+          </div>
+          <ErrorNote error={error} />
+          <Button
+            className="mt-3 w-full sm:w-auto"
+            type="button"
+            onClick={async () => {
+              setCodes(null);
+              setCopied(false);
+              setError(null);
+              await refreshMe();
+            }}
+          >
+            I’ve saved these codes
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p className="mb-3 text-sm text-muted">{remaining} of 10 left</p>
+          {open ? (
+            <form className="flex min-w-0 flex-col gap-3" onSubmit={async (e) => {
+              e.preventDefault();
+              setError(null);
+              setBusy(true);
+              try {
+                const r = await api<{ recovery_codes?: string[] }>("/auth/mfa/recovery-codes/regenerate", {
+                  method: "POST",
+                  json: { password, code },
+                });
+                if (r.recovery_codes?.length) {
+                  setCodes(r.recovery_codes);
+                  resetForm();
+                  await refreshMe();
+                }
+              } catch (err) {
+                setError((err as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            >
+              <p className="text-sm text-warning" role="status">Old codes will no longer work once you create a new list. Save the new codes somewhere safe.</p>
+              <Field label="Current password">
+                {(id) => (
+                  <Input
+                    id={id}
+                    type="password"
+                    autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                )}
+              </Field>
+              <Field label="Authenticator code">
+                {(id) => (
+                  <Input
+                    id={id}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    required
+                  />
+                )}
+              </Field>
+              <ErrorNote error={error} />
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                <Button type="submit" disabled={busy} className="w-full sm:w-auto">Get new codes</Button>
+                <Button type="button" variant="ghost" disabled={busy} className="w-full sm:w-auto" onClick={resetForm}>Cancel</Button>
+              </div>
+            </form>
+          ) : (
+            <Button type="button" variant="secondary" onClick={() => setOpen(true)}>Get new codes</Button>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 function WorkspaceCard() {
   const { workspace, refreshMe } = useApp();
   const [name, setName] = useState(workspace?.name ?? "");
@@ -289,6 +426,7 @@ export default function SettingsPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           <WorkspaceCard key={workspace?.id} />
           <Security />
+          <RecoveryCodesCard />
           <TrustedDevices />
         </div>
         <Card>

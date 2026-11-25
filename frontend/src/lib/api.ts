@@ -46,7 +46,7 @@ export const fetcher = (path: string) => api(path);
 
 // ---------- types (mirror the API) ----------
 export interface Workspace { id: string; name: string; kind: "personal" | "business" | "project"; base_currency: Currency; role: string }
-export interface Me { id: string; email: string; display_name: string; is_demo: boolean; reporting_currency: Currency; mfa_enabled: boolean; workspaces: Workspace[] }
+export interface Me { id: string; email: string; display_name: string; is_demo: boolean; reporting_currency: Currency; mfa_enabled: boolean; recovery_codes_remaining?: number; workspaces: Workspace[] }
 export interface Account { id: string; name: string; kind: string; currency: Currency; institution: string | null; color: string | null; archived: boolean; balance: Money; pending: Money }
 export interface Category { id: string; name: string; direction: "income" | "expense"; icon: string | null; bucket: string | null }
 export interface Txn {
