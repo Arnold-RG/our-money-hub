@@ -13,3 +13,17 @@ paths = [
   '''(^|/)\.env\..*''',
   '''(^|/)backend/tests/test_contract.py$''',
 ]
+
+[[rules]]
+id = "apple-p8-private-key"
+description = "Apple .p8 private key (Sign In / APNs)"
+regex = '''-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----'''
+path = '''(?i)\.p8$'''
+tags = ["key", "apple"]
+
+[[rules]]
+id = "google-client-secret-json"
+description = "Google OAuth client_secret JSON file"
+regex = '''"client_secret"\s*:\s*"[^"]+"'''
+path = '''(?i)(^|/)client_secret[^/]*\.json$'''
+tags = ["key", "google"]

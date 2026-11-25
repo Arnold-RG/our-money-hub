@@ -33,3 +33,7 @@ next-env.d.ts
 .runtime/
 frontend/playwright-output/
 .runtime/
+
+# Apple Sign In / APNs keys and Google OAuth client-secret files
+*.p8
+client_secret*.json
