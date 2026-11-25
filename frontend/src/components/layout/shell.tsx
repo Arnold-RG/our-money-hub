@@ -9,6 +9,7 @@ import { SWITCHER_CURRENCIES, type Currency } from "@/lib/money";
 import { cx } from "@/components/ui";
 import { GROUPS, MORE, NAV } from "./nav";
 import { Wordmark, Logo } from "./logo";
+import { EcosystemSwitcher } from "./EcosystemSwitcher";
 import { CommandPalette } from "./command-palette";
 import { ChromeSlot } from "./PageChrome";
 import { useWs } from "@/lib/hooks";
@@ -168,6 +169,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </a>
       <aside className="side hidden lg:flex">
         <div className="logo px-1 pb-4"><Wordmark /></div>
+        <div className="logo-type px-1 pb-3"><EcosystemSwitcher /></div>
         <div className="logo-type px-1 pb-3"><WorkspaceSwitcher /></div>
         <nav aria-label="Main" className="flex-1 space-y-1 overflow-y-auto">
           {GROUPS.map((g) => (

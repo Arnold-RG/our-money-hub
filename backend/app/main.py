@@ -18,12 +18,18 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    task = None
-    if settings.rates_auto_sync:
-        task = asyncio.create_task(_rates_loop())
+    tasks: list[asyncio.Task] = []
+    if settings.app_env not in {"test"}:
+        if settings.rates_auto_sync:
+            tasks.append(asyncio.create_task(_rates_loop()))
+        from app.modules.events.delivery import configured as delivery_configured, delivery_loop
+        if delivery_configured() or settings.ecosystem_delivery_enabled:
+            tasks.append(asyncio.create_task(delivery_loop()))
     yield
-    if task:
+    for task in tasks:
         task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _rates_loop():

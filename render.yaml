@@ -51,6 +51,14 @@ services:
         value: https://arnova-omh.onrender.com
       - key: CORS_ORIGINS
         value: https://arnova-omh.onrender.com
+      - key: RAGI_API_URL
+        value: https://arnova-ragi-api.onrender.com
+      - key: ECOSYSTEM_SIGNING_KEY_ID
+        sync: false
+      - key: ECOSYSTEM_KEYRING_JSON
+        sync: false
+      - key: OMH_RAGI_WORKSPACE_ID
+        sync: false
 
   - type: web
     name: arnova-omh
@@ -66,3 +74,5 @@ services:
         value: production
       - key: OMH_API_INTERNAL_URL
         value: https://arnova-omh-api.onrender.com
+      - key: NEXT_PUBLIC_RAGI_URL
+        value: https://arnova-ragi.onrender.com

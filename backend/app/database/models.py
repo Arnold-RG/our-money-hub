@@ -235,6 +235,7 @@ class Budget(TimestampMixin, Base):
     ai_provider: Mapped[str | None] = mapped_column(String(40), nullable=True)  # for scope=ai, null = all providers
     currency: Mapped[str] = mapped_column(String(3))
     allocated_minor: Mapped[int] = mapped_column(BigInteger)
+    ragi_project_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     period: Mapped[str] = mapped_column(String(10), default="monthly")
     alert_threshold_pct: Mapped[int] = mapped_column(Integer, default=80)
     hard_limit: Mapped[bool] = mapped_column(Boolean, default=False)  # block reservations above available
@@ -339,6 +340,9 @@ class EventOutbox(Base):
     dedupe_key: Mapped[str | None] = mapped_column(String(160), nullable=True, unique=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class EventInbox(Base):

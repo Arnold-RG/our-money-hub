@@ -162,6 +162,7 @@ def budget_view(bs: budgets.BudgetStatus) -> dict:
             "state": bs.state,
             "over_budget": over,
             "alert_threshold_pct": b.alert_threshold_pct, "hard_limit": b.hard_limit,
+            "ragi_project_id": b.ragi_project_id,
             "period": bs.period_start.strftime("%Y-%m"), "unconverted": bs.unconverted}
 
 
@@ -364,5 +365,5 @@ def service_summary(db: Session, ws: str, today: date) -> dict:
             "has_data": bool(per or ai_budgets), "by_currency": per,
             "ai_budgets": [{"id": b["id"], "name": b["name"], "provider": b["ai_provider"], "allocated": b["allocated"],
                             "actual": b["actual"], "reserved": b["reserved"], "available": b["available"],
-                            "state": b["state"]} for b in ai_budgets],
+                            "state": b["state"], "ragi_project_id": b.get("ragi_project_id")} for b in ai_budgets],
             "note": "Amounts are per currency and are never added across currencies."}

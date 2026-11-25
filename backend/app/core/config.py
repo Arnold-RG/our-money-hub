@@ -26,11 +26,14 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3420,http://127.0.0.1:3420"
     nbp_api_base: str = "https://api.nbp.pl/api"
     budget_alert_threshold_pct: int = 80
-    # Service-to-service auth (ecosystem-contracts/docs/authentication.md): per-service rotating HMAC keys
-    # in a keyring file OUTSIDE the repo. Nothing secret lives in code or in this file.
+    # Service-to-service auth (ecosystem-contracts/docs/authentication.md): per-service rotating HMAC keys.
+    # Prefer ECOSYSTEM_KEYRING_JSON on Render (no disk). ECOSYSTEM_KEYRING_FILE is for local development.
+    ecosystem_keyring_json: str = ""
     ecosystem_keyring_file: str = ""
     ecosystem_signing_key_id: str = ""  # OMH's own kid, used when OMH signs outgoing events
     ecosystem_max_clock_skew_seconds: int = 300
+    ecosystem_delivery_enabled: bool = True
+    ragi_api_url: str = ""  # https://arnova-ragi-api.onrender.com — used to deliver outbox events
     omh_ragi_workspace_id: str = ""  # workspace that RAGI's org maps to (spec gap #23: owner decision)
     omh_ragi_organization_id: str = "arnovagroup"
     # Registration: closed by default. The owner account is created once, with a one-time setup token

@@ -4,7 +4,7 @@ The shared contract lives in `ecosystem-contracts/` (outside this repo); copies 
 
 ## Authentication (all service calls)
 Headers: `X-Arnova-Key-Id`, `X-Arnova-Timestamp` (Unix seconds, ±300 s) and `X-Arnova-Signature: sha256=hex(HMAC-SHA256(secret, "<timestamp>.<raw body>"))`.
-Keys sit in a JSON keyring (`ECOSYSTEM_KEYRING_FILE`, outside the repo). Each key has a `service`, `scopes` and an optional `not_before` / `not_after`, so keys can rotate without downtime.
+Keys sit in `ECOSYSTEM_KEYRING_JSON` (preferred on Render, no disk) or a JSON file (`ECOSYSTEM_KEYRING_FILE`, for local development). Each key has a `service`, `scopes` and an optional `not_before` / `not_after`, so keys can rotate without downtime.
 
 | Route | Scope | Notes |
 |---|---|---|
@@ -18,4 +18,6 @@ Responses: 201 with `status: "active"` means granted. 409 `{detail}` means denie
 
 The OMH workspace that RAGI's organization maps to is configured by `OMH_RAGI_WORKSPACE_ID` and `OMH_RAGI_ORGANIZATION_ID`. The general mapping is still an open owner decision.
 
-Outgoing events (`budget.exceeded`, `budget.updated`, `subscription.updated`) are written to a transactional outbox with the full §10 envelope. A delivery worker is not built yet.
+Outgoing events (`budget.exceeded`, `budget.updated`, `subscription.updated`) are written to a transactional outbox with the full §10 envelope. An in-process delivery loop posts them to `RAGI_API_URL` with retries and backoff for free-tier cold starts.
+
+Budgets may carry `ragi_project_id` so a RAGI project can have its own AI budget. Service reservations prefer a budget tagged with that project id, then a provider-wide or general AI budget.

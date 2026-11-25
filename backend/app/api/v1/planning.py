@@ -39,6 +39,7 @@ class BudgetIn(BaseModel):
     currency: str
     alert_threshold_pct: int = Field(default=80, ge=1, le=100)
     hard_limit: bool = False
+    ragi_project_id: str | None = Field(default=None, max_length=120)
 
 
 @router.get("/budgets")
@@ -65,7 +66,8 @@ def create_budget(body: BudgetIn, ctx: WorkspaceContext = Depends(owner_ws), db:
     b = Budget(workspace_id=ctx.workspace_id, name=body.name.strip(), scope=body.scope,
                category_id=body.category_id if body.scope == "category" else None,
                ai_provider=body.ai_provider if body.scope == "ai" else None, currency=cur, allocated_minor=amount,
-               alert_threshold_pct=body.alert_threshold_pct, hard_limit=body.hard_limit)
+               alert_threshold_pct=body.alert_threshold_pct, hard_limit=body.hard_limit,
+               ragi_project_id=(body.ragi_project_id or None))
     db.add(b)
     db.flush()
     audit(db, workspace_id=ctx.workspace_id, user_id=ctx.user.id, action="budget.created", entity="budget", entity_id=b.id,
@@ -85,6 +87,7 @@ class BudgetPatch(BaseModel):
     alert_threshold_pct: int | None = Field(default=None, ge=1, le=100)
     hard_limit: bool | None = None
     name: str | None = Field(default=None, max_length=120)
+    ragi_project_id: str | None = Field(default=None, max_length=120)
 
 
 @router.patch("/budgets/{bid}")
@@ -96,10 +99,10 @@ def patch_budget(bid: str, body: BudgetPatch, ctx: WorkspaceContext = Depends(ow
         if amt <= 0:
             raise HTTPException(422, "Budget must be greater than zero")
         b.allocated_minor = amt
-    for k in ("alert_threshold_pct", "hard_limit", "name"):
+    for k in ("alert_threshold_pct", "hard_limit", "name", "ragi_project_id"):
         v = getattr(body, k)
         if v is not None:
-            setattr(b, k, v)
+            setattr(b, k, v if k != "ragi_project_id" else (v or None))
     audit(db, workspace_id=ctx.workspace_id, user_id=ctx.user.id, action="budget.updated", entity="budget", entity_id=b.id,
           detail={"allocated_before": before, "allocated_after": b.allocated_minor})
     db.commit()
@@ -209,9 +212,21 @@ def _service_body(raw, service: str) -> ServiceReserveIn:
     return body
 
 
-def _ai_budget_for(db: Session, ws: str, provider: str) -> Budget | None:
+def _ai_budget_for(db: Session, ws: str, provider: str, project_id: str | None = None) -> Budget | None:
+    """Prefer a budget tagged with the RAGI project id, then provider, then a general AI budget."""
     rows = list(db.scalars(select(Budget).where(Budget.workspace_id == ws, Budget.scope == "ai")))
-    return next((b for b in rows if b.ai_provider == provider), None) or next((b for b in rows if not b.ai_provider), None)
+    if project_id:
+        tagged = [b for b in rows if b.ragi_project_id == project_id]
+        match = (
+            next((b for b in tagged if b.ai_provider == provider), None)
+            or next((b for b in tagged if not b.ai_provider), None)
+        )
+        if match:
+            return match
+    untagged = [b for b in rows if not b.ragi_project_id]
+    return next((b for b in untagged if b.ai_provider == provider), None) or next(
+        (b for b in untagged if not b.ai_provider), None
+    )
 
 
 @router.get("/budget-reservations")
@@ -231,7 +246,7 @@ async def create_reservation(request: Request, db: Session = Depends(get_db)):
             body = _service_body(raw, c.service_name)
             if body.provider not in SERVICE_PROVIDERS:
                 raise HTTPException(422, "Unknown AI provider")
-            b = _ai_budget_for(db, c.workspace_id, body.provider)
+            b = _ai_budget_for(db, c.workspace_id, body.provider, body.project_id)
             if not b:
                 raise HTTPException(409, "No AI budget is set up in OMH, so nothing can be reserved")
             est, cur = parse_money(body.estimated_cost.amount, body.estimated_cost.currency, "estimated_cost")

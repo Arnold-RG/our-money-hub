@@ -4,8 +4,9 @@ Every service call carries:
   X-Arnova-Key-Id     the caller's key id (kid)
   X-Arnova-Timestamp  Unix seconds, accepted within ±ECOSYSTEM_MAX_CLOCK_SKEW_SECONDS
   X-Arnova-Signature  "sha256=" + hex(HMAC-SHA256(secret, "<timestamp>.<raw body>"))
-Keys live in a JSON keyring file outside the repository (ECOSYSTEM_KEYRING_FILE), each with a service,
-scopes and an optional not_before/not_after window, so several keys can be active during rotation.
+Keys live in ECOSYSTEM_KEYRING_JSON (preferred on Render, no disk) or a JSON file
+(ECOSYSTEM_KEYRING_FILE, for local development). Each key has a service, scopes and an
+optional not_before/not_after window, so several keys can be active during rotation.
 """
 from __future__ import annotations
 
@@ -45,11 +46,7 @@ def _dt(v: str | None) -> datetime | None:
     return datetime.fromisoformat(v.replace("Z", "+00:00")) if v else None
 
 
-def load_keyring(path: str | None = None) -> dict[str, ServiceKey]:
-    path = path if path is not None else get_settings().ecosystem_keyring_file
-    if not path or not Path(path).exists():
-        return {}
-    raw = json.loads(Path(path).read_text())
+def parse_keyring(raw: dict) -> dict[str, ServiceKey]:
     out: dict[str, ServiceKey] = {}
     for k in raw.get("keys", []):
         if len(k.get("secret", "")) < 32:
@@ -59,8 +56,36 @@ def load_keyring(path: str | None = None) -> dict[str, ServiceKey]:
     return out
 
 
+def load_keyring(path: str | None = None) -> dict[str, ServiceKey]:
+    """Load keys from an explicit file path, or from env JSON, or from ECOSYSTEM_KEYRING_FILE."""
+    if path is not None:
+        if not path or not Path(path).exists():
+            return {}
+        return parse_keyring(json.loads(Path(path).read_text()))
+    s = get_settings()
+    blob = (s.ecosystem_keyring_json or "").strip()
+    if blob:
+        return parse_keyring(json.loads(blob))
+    file_path = s.ecosystem_keyring_file
+    if not file_path or not Path(file_path).exists():
+        return {}
+    return parse_keyring(json.loads(Path(file_path).read_text()))
+
+
 def sign(secret: str, timestamp: str, body: bytes) -> str:
     return "sha256=" + hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+
+
+def signed_headers(body: bytes) -> dict[str, str]:
+    """Sign an outgoing request with OMH's active signing key."""
+    s = get_settings()
+    keyring = load_keyring()
+    key = keyring.get(s.ecosystem_signing_key_id or "")
+    if not key or key.service != "omh" or not key.active(datetime.now(UTC)):
+        raise ServiceAuthError(503, "No active OMH signing key")
+    ts = str(int(time.time()))
+    return {"X-Arnova-Key-Id": key.kid, "X-Arnova-Timestamp": ts, "X-Arnova-Signature": sign(key.secret, ts, body),
+            "Content-Type": "application/json"}
 
 
 def is_service_call(headers) -> bool:
