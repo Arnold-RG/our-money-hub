@@ -23,9 +23,12 @@ function SetupForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
+  const [configError, setConfigError] = useState(false);
 
   useEffect(() => {
-    api<{ owner_setup: boolean }>("/auth/config").then((c) => setAvailable(c.owner_setup)).catch(() => setAvailable(false));
+    api<{ owner_setup: boolean }>("/auth/config")
+      .then((c) => { setAvailable(c.owner_setup); setConfigError(false); })
+      .catch(() => setConfigError(true));
   }, []);
 
   const lengthOk = password.length >= 12 && password.length <= 128;
@@ -48,6 +51,15 @@ function SetupForm() {
     } finally { setBusy(false); }
   };
 
+  if (configError) {
+    return (
+      <>
+        <h1 className="display text-3xl">Can’t reach the server</h1>
+        <p className="mt-3 text-sm" style={{ color: "var(--text2)" }}>The service may still be waking up. Wait a few seconds and refresh this page.</p>
+        <button type="button" className="btn btn-primary mt-8 flex h-12 w-full items-center justify-center" onClick={() => window.location.reload()}>Refresh</button>
+      </>
+    );
+  }
   if (available === false) {
     return (
       <>

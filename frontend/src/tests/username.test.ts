@@ -40,3 +40,13 @@ describe("setup and signup username fields", () => {
     expect(USERNAME_HINT.toLowerCase()).toContain("lowercased");
   });
 });
+
+describe("setup config errors", () => {
+  it("does not treat a failed config fetch as owner setup already being used", () => {
+    const page = read("app/(auth)/setup/page.tsx");
+    expect(page).toContain("configError");
+    expect(page).toMatch(/Can.?t reach the server/);
+    expect(page).toMatch(/waking up/);
+    expect(page).not.toMatch(/catch\(\(\) => setAvailable\(false\)\)/);
+  });
+});
