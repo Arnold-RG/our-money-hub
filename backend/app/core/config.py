@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     access_token_minutes: int = 60 * 12
     cookie_secure: bool = True
     demo_login_enabled: bool = False  # only honoured when app_env == "development"
+    api_docs_enabled: bool = True  # /api/docs and /api/openapi.json; must be false in production
     default_reporting_currency: str = "PLN"
     cors_origins: str = "http://localhost:3420,http://127.0.0.1:3420"
     nbp_api_base: str = "https://api.nbp.pl/api"
@@ -71,6 +72,8 @@ def get_settings() -> Settings:
             problems.append("COOKIE_SECURE must be true")
         if s.demo_login_enabled:
             problems.append("DEMO_LOGIN_ENABLED must be false")
+        if s.api_docs_enabled:
+            problems.append("API_DOCS_ENABLED must be false")
         if problems:
             raise RuntimeError("Refusing to start outside development: " + "; ".join(problems))
     if not s.omh_secret_key:

@@ -1,0 +1,56 @@
+# Our Money Hub on Render — created by Arnold Rurangwa / Arnova Group.
+# Web services are Free. The Postgres instance is a workspace-shared Free
+# database (one per workspace) with a dedicated logical database and role
+# for this app. DATABASE_URL is set in the Dashboard / MCP, not in this file.
+# Region: Frankfurt. Do not commit secrets.
+
+services:
+  - type: web
+    name: arnova-omh-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: API_DOCS_ENABLED
+        value: "false"
+      - key: REGISTRATION_MODE
+        value: invite
+      - key: DEMO_LOGIN_ENABLED
+        value: "false"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: RATES_AUTO_SYNC
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: OMH_SECRET_KEY
+        generateValue: true
+      - key: OMH_FIELD_KEY
+        generateValue: true
+      - key: OMH_OWNER_SETUP_TOKEN
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: arnova-omh
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OMH_API_INTERNAL_URL
+        sync: false

@@ -49,7 +49,9 @@ async def _rates_loop():
 
 app = FastAPI(lifespan=lifespan, title="Our Money Hub API", version="2.0.0",
               description="Financial engine of Arnova Group — created by Arnold Rurangwa / Arnova Group.",
-              docs_url="/api/docs", openapi_url="/api/openapi.json")
+              docs_url="/api/docs" if settings.api_docs_enabled else None,
+              redoc_url=None,
+              openapi_url="/api/openapi.json" if settings.api_docs_enabled else None)
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
                    allow_credentials=True,
                    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],

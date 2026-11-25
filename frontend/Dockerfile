@@ -21,4 +21,5 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/next.config.ts ./next.config.ts
 USER node
 EXPOSE 3420
-CMD ["npx", "next", "start", "-p", "3420", "-H", "0.0.0.0"]
+# Honor Render's PORT.
+CMD ["sh", "-c", "npx next start -H 0.0.0.0 -p ${PORT:-3420}"]
