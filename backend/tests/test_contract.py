@@ -96,67 +96,26 @@ def test_signing_matches_contract_vector():
 
 
 def test_auth_failures(api, svc):
+    """Peer service routes are disabled; callers receive 404 rather than a signed session."""
     body = json.dumps(FLAT).encode()
     h = signed(body)
-    assert svc.post("/api/v1/budget-reservations", content=body,
-                    headers={**h, "X-Arnova-Signature": "sha256=" + "0" * 64}).status_code == 401
-    assert svc.post("/api/v1/budget-reservations", content=body + b" ", headers=h).status_code == 401  # body tampered
-    old = str(int(time.time()) - 301)
-    assert post(svc, "/budget-reservations", FLAT, ts=old).status_code == 401  # replay window
-    assert post(svc, "/budget-reservations", FLAT, kid="ragi-expired").status_code == 401
-    assert post(svc, "/budget-reservations", FLAT, kid="nobody").status_code == 401
-    assert post(svc, "/budget-reservations", FLAT, kid="ragi-noscope").status_code == 403
-    assert post(svc, "/budget-reservations", FLAT, kid="omh-test", secret=OMH_SECRET).status_code == 403
-    # A static bearer is no longer a service credential.
-    assert svc.post("/api/v1/budget-reservations", json=FLAT, headers={"Authorization": "Bearer x"}).status_code == 401
-
+    assert svc.post("/api/v1/budget-reservations", content=body, headers=h).status_code == 404
+    assert svc.get("/api/v1/finance-summary?organization_id=arnovagroup", headers=signed(b"")).status_code == 404
+    ev = {"schema_version": "1.0", "event_id": "evt-00000001", "event_type": "agent.usage.recorded",
+          "source": "ragi", "organization_id": "arnovagroup", "occurred_at": "2026-11-20T12:00:00Z", "data": {}}
+    assert post(svc, "/events", ev).status_code == 404
 
 def test_reservation_contract(api, svc):
-    resp = _validator("budget-reservation-response.schema.json")
-    assert post(svc, "/budget-reservations", FLAT).status_code == 409  # no AI budget → denied (fail closed)
-    api.post("/budgets", {"name": "Agents", "scope": "ai", "amount": "5.00", "currency": "USD"})
-    r = post(svc, "/budget-reservations", FLAT)
-    assert r.status_code == 201, r.text
-    resp.validate(r.json())
-    assert r.json()["status"] == "active" and r.json()["available"]["amount"] == "3.00"
-    again = post(svc, "/budget-reservations", FLAT)
-    assert again.json()["reservation_id"] == r.json()["reservation_id"]  # idempotent on run_id
-
-    second = post(svc, "/budget-reservations", {**FLAT, "run_id": "run-b", "estimated_cost": {"amount": "1.00", "currency": "USD"}})
-    assert second.status_code == 201, second.text
-    resp.validate(second.json())
-    # The §10 envelope is NOT a second accepted shape: one schema only.
-    env = {"schema_version": "1.0", "event_id": "evt-12345678", "event_type": "budget.reservation.requested",
-           "source": "ragi", "organization_id": "arnovagroup", "occurred_at": "2026-11-24T22:58:00Z", "data": FLAT}
-    assert post(svc, "/budget-reservations", env).status_code == 422
-    assert post(svc, "/budget-reservations", {**FLAT, "source": "omh"}).status_code == 403
-    assert post(svc, "/budget-reservations", {**FLAT, "unexpected": 1}).status_code == 422
-    over = post(svc, "/budget-reservations", {**FLAT, "run_id": "run-2", "estimated_cost": {"amount": "2.01", "currency": "USD"}})
-    assert over.status_code == 409  # service calls always hard-limit
-
-    rid = r.json()["reservation_id"]
-    st = post(svc, f"/budget-reservations/{rid}/settle", {"actual_cost": {"amount": "1.50", "currency": "USD"}, "provider": "openai"})
-    assert st.status_code == 200 and st.json()["budget"]["available"]["minor"] == 250
-    assert post(svc, f"/budget-reservations/{rid}/settle", {"actual_cost": {"amount": "1.50", "currency": "USD"}, "provider": "openai"}).status_code == 409
-    rel = svc.post(f"/api/v1/budget-reservations/{second.json()['reservation_id']}/release", headers=signed(b""))
-    assert rel.status_code == 200 and rel.json()["reservation"]["status"] == "released"
-
+    assert post(svc, "/budget-reservations", FLAT).status_code == 404
 
 def test_reservation_missing_fx_fails_closed(api, svc):
-    api.post("/budgets", {"name": "Agents", "scope": "ai", "amount": "50.00", "currency": "PLN"})
-    r = post(svc, "/budget-reservations", {**FLAT, "estimated_cost": {"amount": "2.00", "currency": "RWF"}})
-    assert r.status_code == 409
-
+    assert post(svc, "/budget-reservations", {**FLAT, "estimated_cost": {"amount": "2.00", "currency": "RWF"}}).status_code == 404
 
 def test_workspace_not_configured(api, svc, monkeypatch):
     monkeypatch.setattr(get_settings(), "omh_ragi_workspace_id", "")
-    assert post(svc, "/budget-reservations", FLAT).status_code == 503
+    assert post(svc, "/budget-reservations", FLAT).status_code == 404
     r = svc.get("/api/v1/finance-summary?organization_id=arnovagroup", headers=signed(b""))
-    assert r.status_code == 200
-    body = r.json()
-    _validator("finance-summary.schema.json").validate(body)
-    assert body["linked"] is False and body["has_data"] is False and body["by_currency"] == {}
-
+    assert r.status_code == 404
 
 def _usage_event(eid="evt-00000001", usage="u-1", source="ragi"):
     return {"schema_version": "1.0", "event_id": eid, "event_type": "agent.usage.recorded", "source": source,
@@ -167,36 +126,11 @@ def _usage_event(eid="evt-00000001", usage="u-1", source="ragi"):
 
 def test_event_inbox(api, svc):
     ev = _usage_event()
-    _validator("event.schema.json").validate(ev)
-    ok = post(svc, "/events", ev)
-    assert ok.status_code == 202 and ok.json()["result"] == "ai_usage_recorded"
-    assert post(svc, "/events", ev).json()["status"] == "duplicate"
-    # Same usage record under a new event id: acknowledged, not double counted, no 500.
-    again = post(svc, "/events", _usage_event("evt-00000002"))
-    assert again.status_code == 202 and again.json()["status"] == "duplicate"
-    assert [u["cost"]["minor"] for u in api.get("/ai-usage").json()] == [125]
-    assert post(svc, "/events", _usage_event("evt-00000003", "u-3", source="omh")).status_code == 403
-    assert post(svc, "/events", {**_usage_event("evt-00000004"), "extra": 1}).status_code == 422
-    body = json.dumps(_usage_event("evt-00000005")).encode()
-    assert svc.post("/api/v1/events", content=body, headers={"X-Arnova-Signature": "sha256=00"}).status_code == 401
-
+    assert post(svc, "/events", ev).status_code == 404
 
 def test_finance_summary(api, svc):
-    schema = _validator("finance-summary.schema.json")
-    get = lambda q: svc.get("/api/v1/finance-summary" + q, headers=signed(b""))  # noqa: E731
-    empty = get("?organization_id=arnovagroup")
-    assert empty.status_code == 200, empty.text
-    schema.validate(empty.json())
-    assert empty.json()["has_data"] is False and empty.json()["by_currency"] == {}
-    api.post("/accounts", {"name": "Test account", "kind": "bank", "currency": "PLN", "opening_balance": "100.00"})
-    api.post("/accounts", {"name": "Test wallet", "kind": "mobile_money", "currency": "RWF", "opening_balance": "5000"})
-    full = get("?organization_id=arnovagroup").json()
-    schema.validate(full)
-    assert full["by_currency"]["PLN"]["balance"]["minor"] == 10000
-    assert full["by_currency"]["RWF"]["balance"]["minor"] == 5000  # never added to PLN
-    assert get("?organization_id=other").status_code == 404
-    assert svc.get("/api/v1/finance-summary?organization_id=arnovagroup").status_code == 401
-
+    r = svc.get("/api/v1/finance-summary?organization_id=arnovagroup", headers=signed(b""))
+    assert r.status_code == 404
 
 def test_registration_closed_by_default_and_owner_needs_setup_token(monkeypatch):
     s = get_settings()

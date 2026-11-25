@@ -30,6 +30,7 @@ from app.database.models import FinancialWorkspace, InstanceSetting, User, UserS
 from app.database.session import get_db
 from app.modules.audit.service import audit
 from app.modules.workspaces.service import bootstrap_user_workspaces, user_workspaces
+from app.modules import trusted_devices as trusted
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 DEMO_DOMAIN = "demo.ourmoneyhub.local"
@@ -289,6 +290,7 @@ def mfa_verify(body: CodeIn, request: Request, resp: Response, db: Session = Dep
     u.mfa_last_counter = counter
     sess.revoked_at = datetime.now(UTC)
     full = new_session(db, u.id)
+    trusted.issue_or_refresh(db, u, request, resp, _user_is_owner)
     audit(db, workspace_id=None, user_id=u.id, action="user.login", entity="user", entity_id=u.id, detail={"mfa": True})
     db.commit()
     _set_cookie(resp, full)
@@ -325,6 +327,7 @@ def mfa_enable(body: CodeIn, request: Request, resp: Response, user: User = Depe
         prev.revoked_at = datetime.now(UTC)
         prev.enrolment_required = False
     token = new_session(db, user.id)
+    trusted.issue_or_refresh(db, user, request, resp, _user_is_owner)
     audit(db, workspace_id=None, user_id=user.id, action="user.mfa_enabled", entity="user", entity_id=user.id)
     db.commit()
     _set_cookie(resp, token)
@@ -353,6 +356,7 @@ def mfa_recovery(body: RecoveryIn, request: Request, resp: Response, db: Session
         raise HTTPException(401, "That backup code didn't match")
     sess.revoked_at = datetime.now(UTC)
     full = new_session(db, u.id)
+    trusted.issue_or_refresh(db, u, request, resp, _user_is_owner)
     audit(db, workspace_id=None, user_id=u.id, action="user.login", entity="user", entity_id=u.id, detail={"mfa": "recovery"})
     db.commit()
     _set_cookie(resp, full)
@@ -618,3 +622,45 @@ def create_invite(body: InviteCreateIn, request: Request, db: Session = Depends(
     base = get_settings().public_base_url.rstrip("/")
     return {"email": str(body.email).lower(), "role": body.role, "workspace_id": body.workspace_id,
             "expires_in_hours": 72, "invite_url": f"{base}/invite#{raw}", "token": raw}
+
+
+
+@router.get("/trusted-device")
+def trusted_device_hint(request: Request, db: Session = Depends(get_db)):
+    return trusted.hint(db, request, _user_is_owner)
+
+
+@router.post("/unlock")
+def trusted_device_unlock(body: CodeIn, request: Request, resp: Response, db: Session = Depends(get_db)):
+    try:
+        view = trusted.unlock(db, request, resp, body.code, _user_is_owner, new_session, _set_cookie, me_view)
+        db.commit()
+        return view
+    except HTTPException:
+        db.commit()
+        raise
+
+
+@router.get("/trusted-devices")
+def list_trusted_devices(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not _user_is_owner(db, user.id):
+        raise HTTPException(403, "Only the owner can manage trusted devices")
+    return {"items": trusted.list_devices(db, user, request)}
+
+
+@router.delete("/trusted-devices/{device_id}", status_code=204)
+def revoke_trusted_device(device_id: str, request: Request, resp: Response,
+                          user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not _user_is_owner(db, user.id):
+        raise HTTPException(403, "Only the owner can manage trusted devices")
+    trusted.revoke_one(db, user, device_id, request, resp)
+    db.commit()
+
+
+@router.delete("/trusted-devices", status_code=204)
+def revoke_all_trusted_devices(request: Request, resp: Response,
+                               user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not _user_is_owner(db, user.id):
+        raise HTTPException(403, "Only the owner can manage trusted devices")
+    trusted.revoke_all(db, user, request, resp)
+    db.commit()

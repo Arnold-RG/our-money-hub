@@ -8,8 +8,7 @@ FROM node:22-slim AS build
 WORKDIR /app
 # Render injects service env as build-args; declare ARG or the rewrite bakes in localhost.
 ARG OMH_API_INTERNAL_URL=http://127.0.0.1:8420
-ARG NEXT_PUBLIC_RAGI_URL=https://arnova-ragi.onrender.com
-ENV OMH_API_INTERNAL_URL=$OMH_API_INTERNAL_URL NEXT_PUBLIC_RAGI_URL=$NEXT_PUBLIC_RAGI_URL NEXT_TELEMETRY_DISABLED=1
+ENV OMH_API_INTERNAL_URL=$OMH_API_INTERNAL_URL NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

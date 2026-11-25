@@ -1,9 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
 import { Globe2, Landmark, ShieldCheck, Sparkles } from "lucide-react";
-import { ArrowUpRight } from "lucide-react";
 import { Wordmark } from "@/components/layout/logo";
-import { ragiPublicUrl } from "@/lib/ecosystem-urls";
 
 const FEATURES = [
   { icon: Landmark, title: "Double-entry ledger, balanced to the last grosz and franc" },
@@ -18,9 +16,6 @@ export function AuthShell({ children }: { children: ReactNode }) {
       <section className="relative hidden flex-col border-r p-12 lg:flex" style={{ background: "var(--bg)", borderColor: "var(--border)" }}>
         <div className="flex items-center justify-between gap-4">
           <Wordmark />
-          <a href={ragiPublicUrl()} className="inline-flex items-center gap-1 text-xs font-medium" style={{ color: "var(--text2)" }} title="Opens RAGI. It uses a separate account and session.">
-            Open RAGI <ArrowUpRight size={12} />
-          </a>
         </div>
         <div className="mt-16 max-w-lg">
           <h1 className="display max-w-xl text-[52px] leading-[1.02]">Everything you earn, spend, budget and subscribe to.</h1>

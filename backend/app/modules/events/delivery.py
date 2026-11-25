@@ -26,8 +26,10 @@ EVENTS_PATH = "/api/v1/events"
 
 
 def configured() -> bool:
-    s = get_settings()
-    return bool(s.ecosystem_delivery_enabled and s.ragi_api_url and load_keyring() and s.ecosystem_signing_key_id)
+    """Outbound delivery to other apps is disabled."""
+    return False
+
+
 
 
 def backoff_seconds(attempts: int) -> int:

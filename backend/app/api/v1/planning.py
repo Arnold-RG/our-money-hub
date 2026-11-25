@@ -239,30 +239,16 @@ def list_reservations(ctx: WorkspaceContext = Depends(read_ws), db: Session = De
 @router.post("/budget-reservations", status_code=201)
 async def create_reservation(request: Request, db: Session = Depends(get_db)):
     raw_bytes = await request.body()
+    if is_service_call(request.headers):
+        raise HTTPException(404, "Service reservations are not available")
     c = _caller(request, db, "editor", raw_bytes)
     raw = _json(raw_bytes)
     try:
-        if c.service:
-            body = _service_body(raw, c.service_name)
-            if body.provider not in SERVICE_PROVIDERS:
-                raise HTTPException(422, "Unknown AI provider")
-            b = _ai_budget_for(db, c.workspace_id, body.provider, body.project_id)
-            if not b:
-                raise HTTPException(409, "No AI budget is set up in OMH, so nothing can be reserved")
-            est, cur = parse_money(body.estimated_cost.amount, body.estimated_cost.currency, "estimated_cost")
-            if cur != b.currency:
-                conv = Converter(db, b.currency, c.workspace_id)(Money(est, cur), today())
-                if conv is None:
-                    raise HTTPException(409, f"No current {cur}→{b.currency} rate; reservation refused")
-                est = conv.minor
-            r = budgets.reserve(db, b, amount_minor=est, purpose=f"{body.source} run {body.run_id}"[:255], agent_id=body.agent_id,
-                                external_ref=body.run_id, on=today(), user_id=None, enforce=True)
-        else:
-            body = ReserveIn.model_validate(raw)
-            b = _budget_ws(db, c.workspace_id, body.budget_id)
-            amount, _ = parse_money(body.amount, b.currency)
-            r = budgets.reserve(db, b, amount_minor=amount, purpose=body.purpose, agent_id=body.agent_id,
-                                external_ref=body.external_ref, on=today(), user_id=c.user_id)
+        body = ReserveIn.model_validate(raw)
+        b = _budget_ws(db, c.workspace_id, body.budget_id)
+        amount, _ = parse_money(body.amount, b.currency)
+        r = budgets.reserve(db, b, amount_minor=amount, purpose=body.purpose, agent_id=body.agent_id,
+                            external_ref=body.external_ref, on=today(), user_id=c.user_id)
     except ValidationError as e:
         raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
     except budgets.BudgetUnavailable as e:
@@ -293,6 +279,8 @@ def _reservation(db: Session, ws: str, rid: str) -> tuple[BudgetReservation, Bud
 
 @router.post("/budget-reservations/{rid}/settle")
 async def settle_reservation(rid: str, request: Request, db: Session = Depends(get_db)):
+    if is_service_call(request.headers):
+        raise HTTPException(404, "Service reservations are not available")
     """Actual charges replace the reserved estimate (master spec §08)."""
     raw_bytes = await request.body()
     c = _caller(request, db, "editor", raw_bytes)
@@ -326,6 +314,8 @@ async def settle_reservation(rid: str, request: Request, db: Session = Depends(g
 
 @router.post("/budget-reservations/{rid}/release")
 async def release_reservation(rid: str, request: Request, db: Session = Depends(get_db)):
+    if is_service_call(request.headers):
+        raise HTTPException(404, "Service reservations are not available")
     c = _caller(request, db, "editor", await request.body())
     r, b = _reservation(db, c.workspace_id, rid)
     try:

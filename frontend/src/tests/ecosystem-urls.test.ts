@@ -1,25 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { DEV_RAGI_URL, PRODUCTION_RAGI_URL, ragiPublicUrl } from "../lib/ecosystem-urls";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-describe("ragiPublicUrl", () => {
-  it("never falls back to localhost in production", () => {
-    expect(ragiPublicUrl({ NODE_ENV: "production" })).toBe(PRODUCTION_RAGI_URL);
-    expect(ragiPublicUrl({ NODE_ENV: "production" })).not.toMatch(/localhost/);
-  });
-
-  it("uses localhost only in development when unset", () => {
-    expect(ragiPublicUrl({ NODE_ENV: "development" })).toBe(DEV_RAGI_URL);
-  });
-});
-
-describe("shell switcher", () => {
-  it("links back to RAGI", () => {
+describe("standalone shell", () => {
+  it("does not link out to RAGI", () => {
     const shell = readFileSync(resolve(import.meta.dirname, "../components/layout/shell.tsx"), "utf8");
-    expect(shell).toContain("EcosystemSwitcher");
-    const sw = readFileSync(resolve(import.meta.dirname, "../components/layout/EcosystemSwitcher.tsx"), "utf8");
-    expect(sw).toContain("ragiPublicUrl");
-    expect(sw).toContain("RAGI");
+    expect(shell).not.toContain("EcosystemSwitcher");
+    expect(shell).not.toMatch(/arnova-ragi|NEXT_PUBLIC_RAGI|ragiAppUrl|ragiPublicUrl/);
+    const auth = readFileSync(resolve(import.meta.dirname, "../components/auth/AuthShell.tsx"), "utf8");
+    expect(auth).not.toMatch(/Open RAGI|ragiPublicUrl|ragiAppUrl|arnova-ragi/);
   });
 });

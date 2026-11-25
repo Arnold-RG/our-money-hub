@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { ExternalLink, Landmark, RefreshCw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ExternalLink, Landmark, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { api, type Rate } from "@/lib/api";
 import { useWs } from "@/lib/hooks";
 import { refreshAll, useApp } from "@/providers/app-provider";
@@ -119,6 +119,83 @@ function Rates() {
   );
 }
 
+
+type TrustedDevice = {
+  id: string;
+  label: string;
+  created_at: string | null;
+  last_used_at: string | null;
+  expires_at: string | null;
+  current: boolean;
+};
+
+function when(iso: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+
+function TrustedDevices() {
+  const [items, setItems] = useState<TrustedDevice[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const r = await api<{ items: TrustedDevice[] }>("/auth/trusted-devices");
+      setItems(r.items);
+      setError(null);
+    } catch {
+      setItems([]);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const revoke = async (id?: string) => {
+    setBusy(id ?? "all");
+    try {
+      await api(id ? `/auth/trusted-devices/${id}` : "/auth/trusted-devices", { method: "DELETE" });
+      await load();
+    } catch {
+      setError("Could not revoke that device.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Card>
+      <SectionTitle
+        title="Trusted devices"
+        action={items && items.length > 0 ? (
+          <Button size="sm" variant="secondary" disabled={busy === "all"} onClick={() => revoke()}>Revoke all</Button>
+        ) : undefined}
+      />
+      <p className="mb-3 text-sm text-muted">After you sign in with your password and authenticator on a device, you can unlock it later with just the authenticator code. Revoke a device if it isn’t yours any more.</p>
+      {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}
+      {items === null ? (
+        <p className="text-sm text-muted">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted">No trusted devices yet. One is saved the next time you complete sign-in on this device.</p>
+      ) : (
+        <ul className="divide-y divide-line text-sm">
+          {items.map((d) => (
+            <li key={d.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2 font-medium">
+                  {d.label}
+                  {d.current && <Badge tone="positive"><span className="inline-flex items-center gap-1"><ShieldCheck size={12} /> This device</span></Badge>}
+                </div>
+                <div className="text-xs text-faint">Last used {when(d.last_used_at)} · Expires {when(d.expires_at)}</div>
+              </div>
+              <Button type="button" variant="secondary" size="sm" disabled={busy === d.id} onClick={() => revoke(d.id)} icon={<Trash2 size={14} />}>Revoke</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 function Security() {
   const { me, refreshMe } = useApp();
   const [setup, setSetup] = useState<{ secret: string; otpauth_uri: string } | null>(null);
@@ -212,6 +289,7 @@ export default function SettingsPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           <WorkspaceCard key={workspace?.id} />
           <Security />
+          <TrustedDevices />
         </div>
         <Card>
           <SectionTitle title="About" />

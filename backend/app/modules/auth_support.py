@@ -126,6 +126,8 @@ def _set_new_password(db: Session, user: User, password: str, *, method: str) ->
     now = datetime.now(UTC)
     for sess in db.scalars(select(UserSession).where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))).all():
         sess.revoked_at = now
+    from app.modules.trusted_devices import revoke_all_for_user
+    revoke_all_for_user(db, user.id)
     audit(db, workspace_id=None, user_id=user.id, action="auth.password.changed", entity="user",
           entity_id=user.id, detail={"method": method, "breach_check": breach})
     db.commit()

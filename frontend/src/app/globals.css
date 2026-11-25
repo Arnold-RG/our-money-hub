@@ -52,3 +52,5 @@ html[data-theme="light"] { color-scheme: light; }
 
 .recharts-cartesian-axis-tick-value { fill: var(--faint); font-size: 11px; }
 .recharts-tooltip-cursor { stroke: var(--control-border); }
+
+html, body { max-width: 100%; overflow-x: hidden; }

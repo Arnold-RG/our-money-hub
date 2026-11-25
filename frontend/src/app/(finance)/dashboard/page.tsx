@@ -149,7 +149,7 @@ export default function Dashboard() {
             {!txns ? <Skeleton className="h-40" /> : shownTx.length === 0 ? (
               <EmptyState icon={<ArrowLeftRight size={18} />} title="No transactions yet" body="Payments you add will be listed here, with their real dates and amounts." />
             ) : (
-              <table className="data-table">
+              <div className="table-scroll"><table className="data-table">
                 <thead><tr><th>Date / ID</th><th>Description</th><th>Category</th><th className="r">Amount</th><th>Status</th></tr></thead>
                 <tbody>
                   {shownTx.map((t) => {
@@ -166,7 +166,7 @@ export default function Dashboard() {
                     );
                   })}
                 </tbody>
-              </table>
+              </table></div>
             )}
           </div>
         </>

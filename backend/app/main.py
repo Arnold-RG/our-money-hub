@@ -22,9 +22,6 @@ async def lifespan(_: FastAPI):
     if settings.app_env not in {"test"}:
         if settings.rates_auto_sync:
             tasks.append(asyncio.create_task(_rates_loop()))
-        from app.modules.events.delivery import configured as delivery_configured, delivery_loop
-        if delivery_configured() or settings.ecosystem_delivery_enabled:
-            tasks.append(asyncio.create_task(delivery_loop()))
     yield
     for task in tasks:
         task.cancel()

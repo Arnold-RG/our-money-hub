@@ -9,7 +9,6 @@ import { SWITCHER_CURRENCIES, type Currency } from "@/lib/money";
 import { cx } from "@/components/ui";
 import { GROUPS, MORE, NAV } from "./nav";
 import { Wordmark, Logo } from "./logo";
-import { EcosystemSwitcher } from "./EcosystemSwitcher";
 import { CommandPalette } from "./command-palette";
 import { ChromeSlot } from "./PageChrome";
 import { useWs } from "@/lib/hooks";
@@ -169,7 +168,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </a>
       <aside className="side hidden lg:flex">
         <div className="logo px-1 pb-4"><Wordmark /></div>
-        <div className="logo-type px-1 pb-3"><EcosystemSwitcher /></div>
         <div className="logo-type px-1 pb-3"><WorkspaceSwitcher /></div>
         <nav aria-label="Main" className="flex-1 space-y-1 overflow-y-auto">
           {GROUPS.map((g) => (
@@ -256,14 +254,14 @@ function MobileDock({ onSearch, budgetAlerts }: { onSearch: () => void; budgetAl
       </nav>
       {more && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-3 lg:hidden" onClick={() => setMore(false)}>
-          <div className="card w-full max-w-md p-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Create or go to">
+          <div className="card w-full min-w-0 max-w-md p-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Create or go to">
             <div className="mb-3 flex gap-2">
               <Link href="/transactions" className="btn btn-primary flex-1" onClick={() => setMore(false)}>Add payment</Link>
               <Link href="/accounts" className="btn flex-1" onClick={() => setMore(false)}>Add account</Link>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="more-grid">
               {MORE.map((n) => (
-                <Link key={n.href} href={n.href} onClick={() => setMore(false)} className="flex min-h-[72px] flex-col items-center justify-center gap-1 rounded-xl border border-line bg-surface-2 p-2 text-center text-xs">
+                <Link key={n.href} href={n.href} onClick={() => setMore(false)} className="more-grid-item">
                   <n.icon size={18} style={{ color: "var(--primary-text)" }} />
                   {n.label}
                 </Link>

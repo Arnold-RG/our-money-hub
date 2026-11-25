@@ -213,6 +213,7 @@ EVENT_SOURCES = {"ragi", "omh", "github", "monitoring", "arnovagroup", "movies"}
 
 @router.post("/events", status_code=202)
 async def receive_event(request: Request, db: Session = Depends(get_db)):
+    raise HTTPException(404, "This endpoint is not available")
     """Signed inbox (ecosystem-contracts/docs/authentication.md §2, §4). Scope ``events:write``;
     the envelope ``source`` must equal the signing key's service. Duplicates (same event_id, or the same
     usage record under a new event_id) are acknowledged and ignored. Only ``agent.usage.recorded`` is applied.
@@ -268,6 +269,7 @@ async def receive_event(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/finance-summary")
 def finance_summary(request: Request, organization_id: str, db: Session = Depends(get_db)):
+    raise HTTPException(404, "This endpoint is not available")
     """Read-only summary for RAGI's dashboard (scope ``finance:read``, signed GET with an empty body).
 
     Per currency, never summed across currencies, so no exchange rate is needed and nothing is invented.

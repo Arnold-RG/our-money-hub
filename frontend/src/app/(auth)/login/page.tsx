@@ -26,7 +26,11 @@ export default function LoginPage() {
     api<AuthConfig>("/auth/config").then(setCfg).catch(() => setCfg({
       registration_mode: "closed", owner_setup: false, providers: { github: false },
     }));
-  }, []);
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("password") === "1") return;
+    api<{ available: boolean }>("/auth/trusted-device").then((r) => {
+      if (r.available) router.replace("/unlock");
+    }).catch(() => {});
+  }, [router]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

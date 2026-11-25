@@ -25,13 +25,6 @@ services:
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       OMH_OWNER_SETUP_TOKEN: ${OMH_OWNER_SETUP_TOKEN:-}
       RATES_AUTO_SYNC: ${RATES_AUTO_SYNC:-true}
-      ECOSYSTEM_KEYRING_FILE: ${ECOSYSTEM_KEYRING_FILE:-}
-      ECOSYSTEM_KEYRING_JSON: ${ECOSYSTEM_KEYRING_JSON:-}
-      ECOSYSTEM_SIGNING_KEY_ID: ${ECOSYSTEM_SIGNING_KEY_ID:-}
-      RAGI_API_URL: ${RAGI_API_URL:-}
-      OMH_RAGI_WORKSPACE_ID: ${OMH_RAGI_WORKSPACE_ID:-}
-    volumes:
-      - ${ECOSYSTEM_KEYRING_HOST_PATH:-/dev/null}:/run/secrets/ecosystem-keyring.json:ro
     depends_on: { db: { condition: service_healthy } }
     ports: ["127.0.0.1:8420:8420"]
   web:

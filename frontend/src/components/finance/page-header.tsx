@@ -12,7 +12,7 @@ export function PageHeader({ eyebrow, title, subtitle, actions }: { eyebrow?: st
         )}
       </div>
       <div className="hidden flex-1 lg:block" />
-      {actions && <div className="ml-auto hidden flex-wrap items-center gap-2 sm:flex">{actions}</div>}
+      {actions && <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">{actions}</div>}
     </ChromePortal>
   );
 }

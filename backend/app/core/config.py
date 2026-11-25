@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     # Must be provided via environment outside development. Dev default is random per process.
     omh_secret_key: str = ""
     omh_field_key: str = ""  # key material for encrypting sensitive fields (MFA secrets); falls back to secret key
-    access_token_minutes: int = 60 * 12
+    access_token_minutes: int = 60 * 24 * 14
+    trusted_device_days: int = 90
     cookie_secure: bool = True
     demo_login_enabled: bool = False  # only honoured when app_env == "development"
     api_docs_enabled: bool = True  # /api/docs and /api/openapi.json; must be false in production
@@ -50,8 +51,8 @@ class Settings(BaseSettings):
     forwarded_allow_ips: str = "127.0.0.1,::1"
     email_verification_enabled: bool = False  # D4: no email provider; keep off
     mfa_pending_minutes: int = 10
-    idle_timeout_minutes_privileged: int = 30
-    idle_timeout_minutes: int = 120
+    idle_timeout_minutes_privileged: int = 12 * 60
+    idle_timeout_minutes: int = 12 * 60
     rates_auto_sync: bool = False  # refresh official FX rates every 6h while the API runs
     lockout_attempts: int = 5
     lockout_minutes: int = 15
