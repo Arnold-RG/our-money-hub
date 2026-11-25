@@ -48,6 +48,10 @@ body {
   .btn-ghost { background: transparent; border-color: transparent; }
   .btn-ghost:hover { background: var(--s3); }
   .btn.icon { width: 40px; padding: 0; }
+  @media (max-width: 1023px) {
+    .btn, .btn.icon { min-height: 44px; }
+    .btn.icon { width: 44px; }
+  }
   .input {
     width: 100%; min-height: 40px; padding: 0 .85rem; border-radius: 10px; font-size: .9rem;
     background: var(--s1); border: 1px solid var(--control-border); color: var(--text);
@@ -69,7 +73,25 @@ body {
   .num { font-family: var(--arn-font-num); font-variant-numeric: tabular-nums lining-nums; }
   .icon-btn { display: inline-grid; place-items: center; min-width: var(--arn-hit); min-height: var(--arn-hit); border-radius: 12px; }
   .link-hit { display: inline-flex; align-items: center; min-height: var(--arn-hit); padding-inline: .25rem; }
-  .dock-safe { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
+  .header-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+    min-width: 0;
+  }
+  .header-actions > * {
+    box-sizing: border-box;
+    width: 100%;
+    justify-content: center;
+    white-space: nowrap;
+    min-height: 44px;
+  }
+  @media (min-width: 640px) {
+    .header-actions { flex-direction: row; flex-wrap: wrap; width: auto; margin-left: auto; }
+    .header-actions > * { width: auto; }
+  }
+  .dock-safe { padding-bottom: calc(132px + env(safe-area-inset-bottom)); }
   @media (min-width: 1024px) { .dock-safe { padding-bottom: 2rem; } }
   @media (pointer: coarse) {
     .btn, .input { min-height: var(--arn-hit); }
@@ -194,7 +216,7 @@ body {
   }
   .tab {
     flex: 1; min-width: 0; min-height: 52px; display: grid; place-items: center; align-content: center; gap: 2px;
-    border-radius: 16px; font: 600 10.5px var(--arn-font-sans); color: var(--text2); position: relative;
+    border-radius: 16px; font: 600 12px var(--arn-font-sans); color: var(--text2); position: relative;
   }
   .tab.on { color: var(--primary-text); }
   .tab.on .tab-label { color: var(--text); }

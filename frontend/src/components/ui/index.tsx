@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { forwardRef, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getPortal, useDialog } from "@/lib/use-dialog";
+import { useIsDesktop, useVisualViewportBox } from "@/lib/visual-viewport";
 
 export const cx = clsx;
 
@@ -19,12 +20,12 @@ export function Card({ className, children, ...rest }: React.HTMLAttributes<HTML
 
 export function SectionTitle({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <div className="mb-4 flex items-end justify-between gap-3">
-      <div>
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
         <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-        {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
+        {hint && <p className="mt-0.5 text-xs text-pretty text-muted">{hint}</p>}
       </div>
-      {action}
+      {action ? <div className="header-actions sm:w-auto">{action}</div> : null}
     </div>
   );
 }
@@ -38,7 +39,7 @@ export const Button = forwardRef<
     <button
       ref={ref}
       className={cx(
-        "inline-flex select-none items-center justify-center gap-2 rounded-full font-medium transition-[transform,background,color,box-shadow] duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium transition-[transform,background,color,box-shadow] duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50",
         size === "sm" ? "h-9 px-3.5 text-xs" : "h-11 px-5 text-sm",
         variant === "primary" && "bg-accent text-accent-ink shadow-[0_8px_24px_-10px_var(--omh-accent)] hover:brightness-110",
         variant === "secondary" && "border border-line-strong bg-surface-2 text-ink hover:bg-surface-3",
@@ -126,6 +127,8 @@ export function Segmented<T extends string>({ value, options, onChange, label, s
 export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
+  const isDesktop = useIsDesktop();
+  const vv = useVisualViewportBox();
   useEffect(() => setMounted(true), []);
   useDialog(ref, open, onClose, getPortal);
   const titleId = useId();
@@ -133,14 +136,19 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   return createPortal(
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div
+          className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-6"
+          style={!isDesktop && vv.height ? { top: vv.top, height: vv.height, bottom: "auto" } : undefined}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        >
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} aria-hidden />
           <motion.div
             ref={ref}
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
-            className={cx("glass-solid relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[28px] p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:rounded-[28px]", wide ? "sm:max-w-2xl" : "sm:max-w-lg")}
+            className={cx("glass-solid relative w-full overflow-y-auto rounded-t-[28px] p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:rounded-[28px] sm:max-h-[92dvh]", wide ? "sm:max-w-2xl" : "sm:max-w-lg")}
+            style={!isDesktop && vv.height ? { maxHeight: vv.height } : undefined}
             initial={{ y: 40, opacity: 0, scale: 0.98 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: 30, opacity: 0, scale: 0.98 }}

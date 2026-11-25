@@ -127,7 +127,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-2 pt-2 text-[12.5px]" style={{ color: "var(--text2)" }}>
                 <span>{(subs ?? []).length === 0 ? "No subscriptions tracked yet" : `${subs?.length} subscription${subs && subs.length === 1 ? "" : "s"}`}</span>
                 <span className="flex-1" />
-                <button className="btn" style={{ minHeight: 32, fontSize: 12 }} onClick={() => setAdd("sub")}>+ Add</button>
+                <button className="btn" onClick={() => setAdd("sub")}>+ Add</button>
               </div>
             </div>
           </div>

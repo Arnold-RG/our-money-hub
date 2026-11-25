@@ -112,7 +112,7 @@ export function CurrencyLens({ compact }: { compact?: boolean }) {
         <ChevronDown size={14} className="text-faint" />
       </button>
       {open && (
-        <div className="glass absolute right-0 top-12 z-50 w-80 rounded-2xl p-1.5 shadow-2xl" role="listbox" aria-label="Reporting currency">
+        <div className="glass absolute right-0 top-12 z-50 w-[min(20rem,calc(100vw-1.5rem))] rounded-2xl p-1.5 shadow-2xl" role="listbox" aria-label="Reporting currency">
           {SWITCHER_CURRENCIES.map((c) => {
             const info = rateLine(c as Currency, rates);
             return (
@@ -201,20 +201,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg)" }}>
-        <header className="top flex flex-wrap items-center gap-3 px-4 pt-4 md:px-6">
-          <div className="lg:hidden"><Logo size={32} /></div>
-          <ChromeSlot className="flex min-w-0 flex-1 items-center gap-3" />
+        <header className="top flex flex-wrap items-center gap-2 px-4 pt-[max(1rem,env(safe-area-inset-top))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:gap-3 md:px-6">
+          <div className="lg:hidden shrink-0"><Logo size={32} /></div>
+          <ChromeSlot className="order-last flex w-full min-w-0 flex-col gap-3 lg:order-none lg:flex-1 lg:flex-row lg:items-center" />
           <button onClick={() => setPaletteOpen(true)} className="search-field hidden md:flex" aria-label="Search (Ctrl+K)">
             <Search size={16} />
             <span className="flex-1 text-left">Search…</span>
             <span className="kbd">⌘K</span>
           </button>
-          <div className="order-last w-full overflow-x-auto sm:order-none sm:w-auto"><CurrencyLens compact /></div>
-          <button onClick={toggleTheme} className="btn icon" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
+          <CurrencyLens compact />
+          <button onClick={toggleTheme} className="grid size-11 shrink-0 place-items-center rounded-full border border-line bg-surface-2 text-ink hover:bg-surface-3" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
         </header>
-        <main id="main" className="dock-safe flex min-h-0 flex-1 flex-col gap-4 px-4 pt-4 md:px-6">{children}</main>
+        <main id="main" className="dock-safe flex min-h-0 flex-1 flex-col gap-4 px-4 pt-4 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:px-6">{children}</main>
       </div>
 
       <MobileDock onSearch={() => setPaletteOpen(true)} budgetAlerts={budgetAlerts} />
@@ -253,7 +253,7 @@ function MobileDock({ onSearch, budgetAlerts }: { onSearch: () => void; budgetAl
         </button>
       </nav>
       {more && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-3 lg:hidden" onClick={() => setMore(false)}>
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden" onClick={() => setMore(false)}>
           <div className="card w-full min-w-0 max-w-md p-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Create or go to">
             <div className="mb-3 flex gap-2">
               <Link href="/transactions" className="btn btn-primary flex-1" onClick={() => setMore(false)}>Add payment</Link>
