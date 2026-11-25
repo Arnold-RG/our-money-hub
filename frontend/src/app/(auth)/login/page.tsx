@@ -68,12 +68,8 @@ export default function LoginPage() {
         {error && <p role="alert" className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "color-mix(in srgb, var(--danger) 12%, transparent)" }}>{error}</p>}
         <button className="btn btn-primary h-12 w-full" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
       </form>
-      <p className="mt-6 flex items-start gap-2 text-xs" style={{ color: "var(--text2)" }}>
-        {cfg?.signup_enabled ? (
-          <>Need an account? <Link href="/signup" className="underline">Create account</Link>.</>
-        ) : (
-          <>This app is private and owner-only.</>
-        )}
+      <p className="mt-6 text-xs" style={{ color: "var(--text2)" }}>
+        Need an account? <Link href="/signup" className="underline">Create account</Link>.
         {cfg?.owner_setup && <>{" "}If you are setting this instance up, <Link href="/setup" className="underline">use the owner setup form</Link>.</>}
       </p>
     </>
