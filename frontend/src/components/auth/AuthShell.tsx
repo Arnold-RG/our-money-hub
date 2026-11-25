@@ -42,37 +42,32 @@ export function AuthShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function ProviderButtons({ enabled }: { enabled: { google: boolean; apple: boolean } }) {
+export function ProviderButtons({ enabled }: { enabled: { github?: boolean } }) {
+  const on = Boolean(enabled.github);
+  const start = async () => {
+    if (!on) return;
+    const { api } = await import("@/lib/api");
+    const r = await api<{ authorization_url: string }>("/auth/oauth/github/start", { method: "POST" });
+    window.location.href = r.authorization_url;
+  };
   return (
     <div className="space-y-2.5">
-      <button type="button" disabled={!enabled.google} className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)" }} aria-label="Continue with Google">
-        <GoogleMark /> Continue with Google
+      <button type="button" onClick={start} disabled={!on} className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+        style={{ background: "var(--surface)", borderColor: "var(--border)", color: "inherit" }}
+        aria-label="Continue with GitHub">
+        <GitHubMark /> Continue with GitHub
       </button>
-      <button type="button" disabled={!enabled.apple} className="flex h-12 w-full items-center justify-center gap-3 rounded-xl text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--text)", color: "var(--bg)" }} aria-label="Continue with Apple">
-        <AppleMark /> Continue with Apple
-      </button>
-      {(!enabled.google || !enabled.apple) && (
-        <p className="text-center text-xs" style={{ color: "var(--faint)" }}>Google and Apple sign-in stay off until the owner adds client IDs.</p>
+      {!on && (
+        <p className="text-center text-xs" style={{ color: "var(--faint)" }}>GitHub sign-in stays off until the owner adds a GitHub OAuth app.</p>
       )}
     </div>
   );
 }
 
-function GoogleMark() {
+export function GitHubMark() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-      <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
-      <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
-      <path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/>
-      <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/>
-    </svg>
-  );
-}
-
-function AppleMark() {
-  return (
-    <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true">
-      <path d="M12.73 9.55c.02 2.16 1.89 2.88 1.91 2.89-.02.05-.3 1.02-.98 2.02-.59.86-1.2 1.72-2.16 1.74-.94.02-1.24-.56-2.32-.56s-1.41.54-2.3.58c-.92.04-1.63-.93-2.23-1.79-1.23-1.76-2.17-4.97-.91-7.14.62-1.08 1.74-1.76 2.95-1.78.92-.02 1.78.62 2.32.62s1.54-.77 2.6-.66c.44.02 1.69.18 2.49 1.35-.06.04-1.49.87-1.47 2.73zM10.9 4.02c.5-.6.83-1.44.74-2.27-.71.03-1.57.47-2.08 1.07-.46.53-.86 1.39-.75 2.2.8.06 1.61-.41 2.09-1z"/>
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
     </svg>
   );
 }

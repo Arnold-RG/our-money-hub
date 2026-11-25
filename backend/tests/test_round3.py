@@ -124,14 +124,14 @@ def test_omh_invite_accept_and_generic_errors():
         assert c.cookies.get("__Host-omh_invite")
 
         mismatch = c.post("/api/v1/auth/register", json={
-            "email": "other@example.com", "password": "correct-horse-battery",
+            "email": "other@example.com", "username": "other_example", "password": "correct-horse-battery",
             "display_name": "Other", "invite_token": raw,
         })
         assert mismatch.status_code == 403
         assert mismatch.json()["detail"] == GENERIC_INVITE
 
         ok = c.post("/api/v1/auth/register", json={
-            "email": "new-member@example.com", "password": "correct-horse-battery",
+            "email": "new-member@example.com", "username": "new_member_example", "password": "correct-horse-battery",
             "display_name": "New Member", "invite_token": raw,
         })
         assert ok.status_code == 200, ok.text
@@ -143,7 +143,7 @@ def test_omh_invite_accept_and_generic_errors():
         assert list(roles) == [ws]
 
         reuse = _client().post("/api/v1/auth/register", json={
-            "email": "new-member@example.com", "password": "correct-horse-battery",
+            "email": "new-member@example.com", "username": "new_member_example", "password": "correct-horse-battery",
             "display_name": "New Member", "invite_token": raw,
         })
         assert reuse.status_code == 403

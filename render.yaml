@@ -20,7 +20,7 @@ services:
       - key: API_DOCS_ENABLED
         value: "false"
       - key: REGISTRATION_MODE
-        value: invite
+        value: closed
       - key: DEMO_LOGIN_ENABLED
         value: "false"
       - key: COOKIE_SECURE
@@ -38,6 +38,14 @@ services:
       - key: OMH_FIELD_KEY
         generateValue: true
       - key: OMH_OWNER_SETUP_TOKEN
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
         sync: false
       - key: PUBLIC_BASE_URL
         value: https://arnova-omh.onrender.com

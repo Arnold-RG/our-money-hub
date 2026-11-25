@@ -14,7 +14,9 @@ from app.core.emails import EmailAddress
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core import invites
+from app.core import invites, oauth_github, usernames
+from app.modules import auth_support
+from app.database.models import AuthIdentity, FinancialWorkspace, InstanceSetting, User, UserSession, WorkspaceMember
 from app.core.client_ip import client_ip
 from app.core.config import get_settings
 from app.core.money import CURRENCIES
@@ -38,13 +40,18 @@ class RegisterIn(BaseModel):
     setup_token: str | None = Field(default=None, max_length=200)
     invite_token: str | None = Field(default=None, max_length=200)
     email: EmailAddress
+    username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=12, max_length=128)
     display_name: str = Field(min_length=1, max_length=120)
 
 
 class LoginIn(BaseModel):
-    email: EmailAddress
     password: str = Field(max_length=128)
+    identifier: str | None = Field(default=None, max_length=320)
+    email: str | None = Field(default=None, max_length=320)
+
+    def login_id(self) -> str:
+        return (self.identifier or self.email or "").strip()
 
 
 class CodeIn(BaseModel):
@@ -61,8 +68,9 @@ class MeUpdate(BaseModel):
 
 
 def me_view(db: Session, u: User) -> dict:
-    return {"id": u.id, "email": u.email, "display_name": u.display_name, "is_demo": u.is_demo,
+    return {"id": u.id, "email": u.email, "username": u.username, "display_name": u.display_name, "is_demo": u.is_demo,
             "reporting_currency": u.reporting_currency, "mfa_enabled": u.mfa_enabled,
+            "has_password": bool(u.password_hash),
             "workspaces": [{"id": w.id, "name": w.name, "kind": w.kind, "base_currency": w.base_currency, "role": r}
                            for w, r in user_workspaces(db, u.id)]}
 
@@ -135,9 +143,11 @@ def auth_config(db: Session = Depends(get_db)):
         "mfa": "totp",
         "registration_mode": s.registration_mode,
         "owner_setup": _owner_setup_pending(db),
-        "providers": {"google": bool(s.google_client_id), "apple": bool(s.apple_client_id)},
-        "password_reset": "cli",
+        "providers": {"github": bool(s.github_client_id)},
+        "password_reset": "email",
         "email_verification": bool(s.email_verification_enabled),
+        "private": not (s.app_env in {"development", "test"}),
+        "signup_enabled": s.app_env in {"development", "test"} and s.registration_mode == "open",
     }
 
 
@@ -156,8 +166,14 @@ def register(body: RegisterIn, resp: Response, request: Request, db: Session = D
     invite_raw = (body.invite_token or request.cookies.get(invites.INVITE_COOKIE) or "").strip() or None
     invite_flow = (not setup_ok) and s.registration_mode == "invite" and bool(invite_raw)
     open_flow = (not setup_ok) and (not invite_flow) and s.registration_mode == "open"
+    if not setup_ok and s.app_env not in {"development", "test"}:
+        raise HTTPException(403, "This app is private.")
     if not setup_ok and not invite_flow and not open_flow:
         raise HTTPException(403, invites.GENERIC if invite_raw else "Registration is closed. Ask the owner for an invite.")
+    try:
+        username = usernames.validate_username(body.username)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     try:
         validate_password(body.password, email=body.email, name=body.display_name)
     except ValueError as exc:
@@ -175,13 +191,16 @@ def register(body: RegisterIn, resp: Response, request: Request, db: Session = D
         invite_flow = True
     if email.endswith("@" + DEMO_DOMAIN) or db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "An account with this email already exists")
-    u = User(email=email, display_name=body.display_name.strip(), password_hash=hash_password(body.password))
+    if not usernames.is_available(db, User, username):
+        raise HTTPException(409, "That username is not available")
+    u = User(email=email, username=username, display_name=body.display_name.strip(), password_hash=hash_password(body.password))
     db.add(u)
     db.flush()
     if invite_flow and invite_row.workspace_id:
         db.add(WorkspaceMember(workspace_id=invite_row.workspace_id, user_id=u.id, role=invite_row.role or "viewer"))
     else:
         bootstrap_user_workspaces(db, u)
+    auth_support.ensure_instance_owner(db, u)
     if setup_ok:
         db.add(InstanceSetting(key="owner_bootstrapped", value="1"))
         try:
@@ -189,6 +208,8 @@ def register(body: RegisterIn, resp: Response, request: Request, db: Session = D
         except Exception:
             db.rollback()
             raise HTTPException(409, "Owner setup has already been used")
+    from app.core.recovery_codes import issue_codes
+    codes = issue_codes(db, u.id)
     enrol = _user_is_owner(db, u.id)
     audit(db, workspace_id=None, user_id=u.id, action="user.registered", entity="user", entity_id=u.id,
           detail={"breach_check": breach, "owner_setup": setup_ok, "invite": bool(invite_flow)})
@@ -201,15 +222,19 @@ def register(body: RegisterIn, resp: Response, request: Request, db: Session = D
     if invite_flow:
         _clear_invite_cookie(resp)
     if enrol:
-        return {"mfa_required": False, "mfa_enrolment_required": True}
-    return me_view(db, u)
+        return {"mfa_required": False, "mfa_enrolment_required": True, "recovery_codes": codes}
+    view = me_view(db, u)
+    view["recovery_codes"] = codes
+    return view
 
 
 @router.post("/login")
 def login(body: LoginIn, resp: Response, request: Request, db: Session = Depends(get_db)):
     s = get_settings()
     ip = client_ip(request)
-    email = body.email.lower()
+    ident = body.login_id()
+    key, u = auth_support.lookup_user(db, ident)
+    email = key or ident.lower()
     allowed, retry = hit(db, f"login:ip:{ip}", 20, 300)
     if not allowed:
         raise _http_retry(429, GENERIC_LOCK, retry)
@@ -219,8 +244,7 @@ def login(body: LoginIn, resp: Response, request: Request, db: Session = Depends
     blocked, retry = backoff_state(db, f"login:email:{email}")
     if blocked:
         raise _http_retry(429, GENERIC_LOCK, retry)
-    u = db.scalar(select(User).where(User.email == email))
-    ok = verify_password(body.password, u.password_hash if u and not u.is_demo else None)
+    ok = verify_password(body.password, u.password_hash if u and not u.is_demo and u.password_hash else None)
     if not ok:
         record_failure(db, f"login:email:{email}")
         if u and not u.is_demo:
@@ -380,15 +404,111 @@ def update_me(body: MeUpdate, user: User = Depends(current_user), db: Session = 
     return me_view(db, user)
 
 
+
+class PasswordResetRequest(BaseModel):
+    identifier: str | None = Field(default=None, max_length=320)
+    email: str | None = Field(default=None, max_length=320)
+
+    def login_id(self) -> str:
+        return (self.identifier or self.email or "").strip()
+
+
+class PasswordResetConfirm(BaseModel):
+    identifier: str = Field(min_length=1, max_length=320)
+    code: str = Field(min_length=6, max_length=6)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class PasswordRecoveryReset(BaseModel):
+    identifier: str = Field(min_length=1, max_length=320)
+    recovery_code: str = Field(min_length=8, max_length=16)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class PasswordSetIn(BaseModel):
+    password: str = Field(min_length=12, max_length=128)
+
+
+class OAuthCallbackIn(BaseModel):
+    code: str = Field(min_length=1, max_length=200)
+    state: str = Field(min_length=1, max_length=200)
+
+
+def _set_oauth_cookie(resp: Response, value: str) -> None:
+    resp.set_cookie("__Host-omh_oauth", value, max_age=600, **HOST_ATTRS)
+
+
+def _clear_oauth_cookie(resp: Response) -> None:
+    resp.delete_cookie("__Host-omh_oauth", path="/", secure=True, httponly=True, samesite="lax")
+
+
+def _finish_login(db: Session, u: User, resp: Response, *, method: str):
+    s = get_settings()
+    enrol = (not u.mfa_enabled) and auth_support.is_owner(db, u)
+    if u.mfa_enabled:
+        token = new_session(db, u.id, mfa_pending=True)
+        db.commit()
+        _set_cookie(resp, token, s.mfa_pending_minutes)
+        return {"mfa_required": True, "mfa_enrolment_required": False, "user": None}
+    token = new_session(db, u.id, enrolment_required=enrol)
+    audit(db, workspace_id=None, user_id=u.id, action="user.login", entity="user", entity_id=u.id, detail={"method": method})
+    db.commit()
+    _set_cookie(resp, token, s.mfa_pending_minutes if enrol else None)
+    if enrol:
+        return {"mfa_required": False, "mfa_enrolment_required": True, "user": None}
+    return {"mfa_required": False, "mfa_enrolment_required": False, "user": me_view(db, u)}
+
+
+@router.post("/oauth/github/start")
+def oauth_github_start(resp: Response):
+    s = get_settings()
+    if not s.github_client_id or not s.github_client_secret:
+        raise HTTPException(503, "GitHub sign-in is not configured yet")
+    try:
+        _state, cookie, url = oauth_github.new_pkce_state()
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    _set_oauth_cookie(resp, cookie)
+    return {"authorization_url": url}
+
+
+@router.post("/oauth/github/callback")
+def oauth_github_callback(body: OAuthCallbackIn, request: Request, resp: Response, db: Session = Depends(get_db)):
+    s = get_settings()
+    if not s.github_client_id or not s.github_client_secret:
+        raise HTTPException(503, "GitHub sign-in is not configured yet")
+    verifier = oauth_github.parse_cookie(request.cookies.get("__Host-omh_oauth") or "", body.state)
+    _clear_oauth_cookie(resp)
+    if not verifier:
+        raise HTTPException(400, "GitHub sign-in could not be completed")
+    try:
+        result = oauth_github.exchange(body.code, verifier)
+    except Exception as exc:
+        raise HTTPException(400, "GitHub sign-in could not be completed") from exc
+    profile = result.get("profile") or {}
+    if not oauth_github.is_allowed_github_account(profile):
+        raise HTTPException(403, "This app is private.")
+    primary = result.get("primary_email") or {}
+    email = (primary.get("email") or "").strip().lower()
+    if not email or not primary.get("verified"):
+        raise HTTPException(403, "GitHub sign-in needs a verified primary email")
+    subject = str(profile.get("id") or "")
+    identity = db.scalar(select(AuthIdentity).where(AuthIdentity.provider == "github", AuthIdentity.subject == subject))
+    owner = auth_support.instance_owner(db)
+    if owner is None:
+        raise HTTPException(403, "This app is private.")
+    user = db.get(User, identity.user_id) if identity else owner
+    if user is None or not auth_support.is_owner(db, user) or (identity and identity.user_id != owner.id):
+        raise HTTPException(403, "This app is private.")
+    if not identity:
+        db.add(AuthIdentity(user_id=owner.id, provider="github", subject=subject, email=email, email_verified=True))
+        user = owner
+    return _finish_login(db, user, resp, method="github")
+
+
 @router.post("/oauth/{provider}/start")
 def oauth_start(provider: str):
-    if provider not in {"google", "apple"}:
-        raise HTTPException(404, "Unknown provider")
-    s = get_settings()
-    enabled = (provider == "google" and s.google_client_id) or (provider == "apple" and s.apple_client_id)
-    if not enabled:
-        raise HTTPException(503, f"{provider.title()} sign-in is not configured yet")
-    raise HTTPException(503, f"{provider.title()} sign-in is not configured yet")
+    raise HTTPException(404, "Unknown provider")
 
 
 @router.post("/email/verify")
@@ -406,10 +526,50 @@ def email_resend():
 
 
 @router.post("/password/forgot", status_code=202)
-def password_forgot():
-    """No email provider (D4). Always the same response; the owner resets passwords via CLI."""
-    return {"status": "accepted", "delivery": "cli",
-            "message": "Ask the owner to reset your password. They run a command on the server."}
+def password_forgot(body: PasswordResetRequest, request: Request, db: Session = Depends(get_db)):
+    try:
+        return auth_support.request_code(db, body.login_id(), request)
+    except auth_support.ResetError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(exc.status, str(exc), headers=headers) from exc
+
+
+@router.post("/password/reset")
+def password_reset(body: PasswordResetConfirm, request: Request, db: Session = Depends(get_db)):
+    try:
+        auth_support.confirm_code(db, body.identifier, body.code, body.password, request)
+    except auth_support.ResetError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(exc.status, str(exc), headers=headers) from exc
+    return {"status": "ok"}
+
+
+@router.post("/password/recovery")
+def password_reset_recovery(body: PasswordRecoveryReset, request: Request, db: Session = Depends(get_db)):
+    try:
+        auth_support.confirm_recovery(db, body.identifier, body.recovery_code, body.password, request)
+    except auth_support.ResetError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(exc.status, str(exc), headers=headers) from exc
+    return {"status": "ok"}
+
+
+@router.post("/password/set")
+def password_set(body: PasswordSetIn, request: Request, db: Session = Depends(get_db),
+                 user: User = Depends(require_recent_auth())):
+    if not auth_support.is_owner(db, user):
+        raise HTTPException(403, "This app is private.")
+    try:
+        auth_support.set_password(db, user, body.password)
+    except auth_support.ResetError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return {"status": "ok", "user": me_view(db, user)}
+
+
+@router.post("/recovery", status_code=202)
+def recovery(body: PasswordResetRequest, request: Request, db: Session = Depends(get_db)):
+    """Backward-compatible alias of /password/forgot."""
+    return password_forgot(body, request, db)
 
 
 

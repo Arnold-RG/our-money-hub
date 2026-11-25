@@ -37,15 +37,14 @@ class Settings(BaseSettings):
     # (OMH_OWNER_SETUP_TOKEN, set in the environment, never committed) on a database with no real users.
     allow_registration: bool = False  # deprecated; use registration_mode
     registration_mode: str = "closed"  # closed | invite | open
+    registration_open_confirmed: bool = False
     omh_owner_setup_token: str = ""
     public_base_url: str = "http://localhost:3420"
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    resend_api_key: str = ""
+    mail_from: str = ""
     forwarded_allow_ips: str = "127.0.0.1,::1"
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    apple_client_id: str = ""
-    apple_team_id: str = ""
-    apple_key_id: str = ""
-    apple_private_key: str = ""
     email_verification_enabled: bool = False  # D4: no email provider; keep off
     mfa_pending_minutes: int = 10
     idle_timeout_minutes_privileged: int = 30
@@ -74,6 +73,8 @@ def get_settings() -> Settings:
             problems.append("DEMO_LOGIN_ENABLED must be false")
         if s.api_docs_enabled:
             problems.append("API_DOCS_ENABLED must be false")
+        if s.registration_mode == "open" and not s.registration_open_confirmed:
+            problems.append("REGISTRATION_MODE=open requires REGISTRATION_OPEN_CONFIRMED=true")
         if problems:
             raise RuntimeError("Refusing to start outside development: " + "; ".join(problems))
     if not s.omh_secret_key:

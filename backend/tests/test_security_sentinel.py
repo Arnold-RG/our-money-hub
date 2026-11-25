@@ -204,7 +204,7 @@ def test_unknown_email_and_wrong_password_look_the_same():
 
 
 def test_short_password_rejected():
-    r = TestClient(app, base_url="https://testserver").post("/api/v1/auth/register", json={"email": "s@example.com", "password": "short-pass1",
+    r = TestClient(app, base_url="https://testserver").post("/api/v1/auth/register", json={"email": "s@example.com", "username": "s_example", "password": "short-pass1",
                                                              "display_name": "S"}, headers={**H, "Origin": "https://testserver"})
     assert r.status_code == 422
 

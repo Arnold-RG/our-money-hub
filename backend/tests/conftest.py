@@ -1,3 +1,12 @@
+
+def username_for(email: str) -> str:
+    local, _, domain = (email or "user").lower().partition("@")
+    slug = "".join(ch if ch.isalnum() else "_" for ch in local)
+    if not slug or not slug[0].isalpha():
+        slug = "u_" + slug
+    return f"{slug}_{domain.split('.')[0]}"[:32]
+
+
 import os
 import tempfile
 
@@ -77,7 +86,7 @@ def _enrol_owner(c: TestClient) -> None:
 
 def register(email="owner@example.com", name="Owner", enrol: bool = True) -> tuple[Api, dict]:
     c = _client()
-    r = c.post("/api/v1/auth/register", json={"email": email, "password": "correct-horse-battery", "display_name": name})
+    r = c.post("/api/v1/auth/register", json={"email": email, "username": username_for(email), "password": "correct-horse-battery", "display_name": name})
     assert r.status_code == 200, r.text
     body = r.json()
     if enrol and body.get("mfa_enrolment_required"):

@@ -13,6 +13,7 @@ function SetupForm() {
   const { secret } = useSecretFromFragment();
   const [token, setToken] = useState("");
   useEffect(() => { if (secret) setToken(secret); }, [secret]);
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -37,7 +38,7 @@ function SetupForm() {
     try {
       const r = await api<{ mfa_enrolment_required?: boolean }>("/auth/register", {
         method: "POST",
-        json: { setup_token: token, email, password, display_name: name },
+        json: { setup_token: token, username, email, password, display_name: name },
       });
       if (r.mfa_enrolment_required) router.push("/verify?enrol=1");
       else { await refreshMe(); router.replace("/dashboard"); }
@@ -68,6 +69,9 @@ function SetupForm() {
           {(id) => <Input id={id} autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} required minLength={32} />}
         </Field>
         <Field label="Your name">{(id) => <Input id={id} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required />}</Field>
+        <Field label="Username" hint="3–32 characters: start with a letter, then letters, numbers or underscores.">
+          {(id) => <Input id={id} autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={32} pattern="[a-z][a-z0-9_]{2,31}" />}
+        </Field>
         <Field label="Email">{(id) => <Input id={id} type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />}</Field>
         <Field label="Password" hint="12–128 characters. No composition rules.">
           {(id) => (
